@@ -17,6 +17,7 @@ const SESSION_ID = process.env.SESSION_ID || parseArg('--session-id', 'default')
 const SESSION_TITLE = process.env.SESSION_TITLE || parseArg('--title', 'ExcaliClaude');
 const WINDOW_WIDTH = parseInt(process.env.WINDOW_WIDTH || parseArg('--width', '1280'), 10);
 const WINDOW_HEIGHT = parseInt(process.env.WINDOW_HEIGHT || parseArg('--height', '800'), 10);
+const HEADLESS = process.env.HEADLESS === '1' || process.argv.includes('--headless');
 
 function guessMime(p: string): string {
   const ext = p.toLowerCase().split('.').pop() || '';
@@ -58,15 +59,24 @@ async function serveEmbedded(
 }
 
 async function main(): Promise<void> {
-  const { app, server } = createCanvasApp({
+  const { server } = createCanvasApp({
     sessionId: SESSION_ID,
     title: SESSION_TITLE,
     rootHandler: (req, res, next) => void serveEmbedded(req, res, next),
     staticHandler: (req, res, next) => void serveEmbedded(req, res, next),
   });
 
-  await new Promise<void>((resolve) => server.listen(PORT, HOST, () => resolve()));
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(PORT, HOST, () => resolve());
+  });
   console.error(`[canvas-bin] Session ${SESSION_ID} listening on http://${HOST}:${PORT}`);
+
+  if (HEADLESS) {
+    console.error(`[canvas-bin] HEADLESS mode — window disabled`);
+    await new Promise(() => {});
+    return;
+  }
 
   let Webview: any;
   try {

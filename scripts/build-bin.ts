@@ -84,6 +84,14 @@ function main(): void {
   ];
   run(`${bunBin} ${flags.join(' ')}`);
 
+  // macOS: apply ad-hoc codesign so Gatekeeper doesn't SIGKILL the unsigned binary.
+  if (target.startsWith('bun-darwin')) {
+    try {
+      execSync(`codesign --remove-signature "${outFile}"`, { stdio: 'ignore' });
+    } catch {}
+    run(`codesign --force --sign - --identifier excaliclaude.canvas "${outFile}"`);
+  }
+
   const stat = fs.statSync(outFile);
   console.log(`\n✓ Built ${outFile} (${(stat.size / 1024 / 1024).toFixed(1)} MB)`);
 }
