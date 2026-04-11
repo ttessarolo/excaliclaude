@@ -1,0 +1,30 @@
+{
+  "name": "excaliclaude-marketplace",
+  "owner": {
+    "name": "ttessarolo"
+  },
+  "plugins": [
+    {
+      "name": "excaliclaude",
+      "source": ".",
+      "description": "Interactive visual collaboration between human and Claude on a shared Excalidraw canvas. Draw together, discuss ideas visually, brainstorm on a whiteboard.",
+      "version": "0.1.0",
+      "author": {
+        "name": "ttessarolo"
+      },
+      "homepage": "https://github.com/ttessarolo/excaliclaude",
+      "repository": "https://github.com/ttessarolo/excaliclaude",
+      "license": "MIT",
+      "keywords": [
+        "excalidraw",
+        "canvas",
+        "visual-collaboration",
+        "diagram",
+        "architecture",
+        "brainstorm",
+        "whiteboard"
+      ],
+      "category": "productivity"
+    }
+  ]
+}
