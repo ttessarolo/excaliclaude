@@ -12,6 +12,7 @@ export interface ClaudeStatusInfo {
   busy: boolean;
   tool: string | null;
   label: string | null;
+  history: string[];
 }
 
 interface Props {
@@ -20,10 +21,7 @@ interface Props {
   messages: ChatMessage[];
   claudeStatus?: ClaudeStatusInfo;
   collapsed?: boolean;
-  onSendSignal: (
-    type: 'look' | 'message' | 'approve',
-    message?: string,
-  ) => void;
+  onSendSignal: (type: 'look' | 'message', message?: string) => void;
   onQuit: () => void;
   onFocusElements?: (ids: string[]) => void;
 }
@@ -39,7 +37,15 @@ export function ClaudeSidebar({
   onFocusElements,
 }: Props): JSX.Element {
   const busy = !!claudeStatus?.busy;
-  const statusLabel = claudeStatus?.label || 'Thinking...';
+  const currentLabel = claudeStatus?.label || 'Thinking...';
+  const history = claudeStatus?.history || [];
+  // Show the trailing history minus the current label if it matches the tail,
+  // so the active label isn't duplicated as a trail entry.
+  const trail =
+    history.length > 0 && history[history.length - 1] === currentLabel
+      ? history.slice(0, -1)
+      : history;
+
   return (
     <aside
       className={`claude-sidebar${collapsed ? ' collapsed' : ''}`}
@@ -54,17 +60,6 @@ export function ClaudeSidebar({
             {' · '}
             {session.status}
           </span>
-          {busy && (
-            <div
-              className="claude-thinking"
-              role="status"
-              aria-live="polite"
-              title={claudeStatus?.tool || 'Claude is working'}
-            >
-              <span className="claude-thinking-spinner" aria-hidden="true" />
-              <span className="claude-thinking-label">{statusLabel}</span>
-            </div>
-          )}
         </div>
         <div className="header-actions">
           <button
@@ -82,9 +77,30 @@ export function ClaudeSidebar({
       <ChatThread messages={messages} onFocusElements={onFocusElements} />
 
       <footer className="claude-sidebar-footer">
+        {busy && (
+          <div
+            className="claude-thinking"
+            role="status"
+            aria-live="polite"
+            title={claudeStatus?.tool || 'Claude is working'}
+          >
+            <div className="claude-thinking-head">
+              <span className="claude-thinking-spinner" aria-hidden="true" />
+              <span className="claude-thinking-label">{currentLabel}</span>
+            </div>
+            {trail.length > 0 && (
+              <ul className="claude-thinking-trail">
+                {trail.map((entry, i) => (
+                  <li key={`${entry}-${i}`}>{entry}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
         <ChatInput
           onSend={(text) => onSendSignal('message', text)}
           disabled={!connected}
+          busy={busy}
           placeholder="Message Claude..."
         />
         <div className="signal-buttons">
@@ -95,14 +111,6 @@ export function ClaudeSidebar({
             title="Ask Claude to look at the canvas"
           >
             👀 Claude, look!
-          </button>
-          <button
-            className="signal-btn secondary"
-            onClick={() => onSendSignal('approve')}
-            disabled={!connected}
-            title="Approve Claude's last change"
-          >
-            ✅ Approve
           </button>
         </div>
       </footer>

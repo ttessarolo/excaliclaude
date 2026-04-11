@@ -874,7 +874,7 @@ function App(): JSX.Element {
   // Feature 2: wrap sendSignal so we can tell Claude when the scene hasn't
   // changed since the last turn — saves tokens by skipping describe_scene.
   const sendSignalWithDiff = async (
-    type: 'look' | 'message' | 'approve',
+    type: 'look' | 'message',
     message?: string,
   ): Promise<void> => {
     let sceneUnchanged = false

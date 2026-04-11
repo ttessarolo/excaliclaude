@@ -1,4 +1,6 @@
 import React, { useEffect, useRef } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 export interface ChatMessage {
   id: string;
@@ -17,7 +19,7 @@ interface Props {
 function formatTime(ts: string | Date): string {
   try {
     const d = typeof ts === 'string' ? new Date(ts) : ts;
-    return d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+    return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
   } catch {
     return '';
   }
@@ -34,8 +36,8 @@ export function ChatThread({ messages, onFocusElements }: Props): JSX.Element {
     return (
       <div className="chat-thread">
         <div className="chat-empty">
-          Nessun messaggio. Disegna sul canvas e premi<br />
-          "👀 Claude, guarda!" quando vuoi un feedback.
+          No messages yet. Draw on the canvas, then press<br />
+          "👀 Claude, look!" when you want feedback.
         </div>
       </div>
     );
@@ -45,18 +47,32 @@ export function ChatThread({ messages, onFocusElements }: Props): JSX.Element {
     <div className="chat-thread">
       {messages.map((msg) => (
         <div key={msg.id} className={`chat-message ${msg.sender} ${msg.type}`}>
-          {msg.sender === 'claude' && <div className="message-avatar">C</div>}
           <div className="message-content">
-            {msg.type === 'action' && <span className="action-badge">🎨 Azione</span>}
-            {msg.type === 'question' && <span className="action-badge">❓ Domanda</span>}
-            {msg.type === 'suggestion' && <span className="action-badge">💡 Suggerimento</span>}
-            <p>{msg.content}</p>
+            {msg.type === 'action' && <span className="action-badge">🎨 Action</span>}
+            {msg.type === 'question' && <span className="action-badge">❓ Question</span>}
+            {msg.type === 'suggestion' && <span className="action-badge">💡 Suggestion</span>}
+            {msg.sender === 'system' ? (
+              <p>{msg.content}</p>
+            ) : (
+              <div className="markdown-body">
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  components={{
+                    a: ({ node, ...props }) => (
+                      <a {...props} target="_blank" rel="noreferrer noopener" />
+                    ),
+                  }}
+                >
+                  {msg.content}
+                </ReactMarkdown>
+              </div>
+            )}
             {msg.elements_affected && msg.elements_affected.length > 0 && (
               <button
                 className="focus-elements-btn"
                 onClick={() => onFocusElements?.(msg.elements_affected!)}
               >
-                📍 Mostra sul canvas
+                📍 Show on canvas
               </button>
             )}
           </div>

@@ -103,6 +103,7 @@ export class SessionManager {
     const projectRoot = this.findProjectRoot();
     const p = process.platform;
     const a = process.arch;
+    const binDir = path.join(projectRoot, 'dist', 'bin');
 
     const map: Record<string, string> = {
       'darwin-arm64': 'canvas-darwin-arm64',
@@ -114,8 +115,22 @@ export class SessionManager {
     const name = map[`${p}-${a}`];
     if (!name) return null;
 
-    const candidate = path.join(projectRoot, 'dist', 'bin', name);
-    return fs.existsSync(candidate) ? candidate : null;
+    // On macOS, prefer the `.app` bundle (so LaunchServices attaches the
+    // proper dock icon). Fall back to the raw binary if the bundle is absent.
+    if (p === 'darwin') {
+      const suffix = `${p}-${a}`;
+      const bundled = path.join(
+        binDir,
+        `ExcaliClaude-${suffix}.app`,
+        'Contents',
+        'MacOS',
+        'excaliclaude',
+      );
+      if (fs.existsSync(bundled)) return bundled;
+    }
+
+    const raw = path.join(binDir, name);
+    return fs.existsSync(raw) ? raw : null;
   }
 
   /**

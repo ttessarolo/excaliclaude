@@ -48,6 +48,99 @@ function which(bin: string): string | null {
   }
 }
 
+const APP_NAME = 'ExcaliClaude';
+const APP_BUNDLE_ID = 'dev.excaliclaude.canvas';
+
+function ensureIcon(): string | null {
+  const icns = path.join(PROJECT_ROOT, 'assets', 'icon', 'icon.icns');
+  if (fs.existsSync(icns)) return icns;
+  console.log('[build-bin] icon missing — generating');
+  try {
+    run('npx tsx scripts/generate-icon.ts');
+  } catch (err) {
+    console.warn('[build-bin] icon generation failed:', err);
+    return null;
+  }
+  return fs.existsSync(icns) ? icns : null;
+}
+
+function writeInfoPlist(
+  contentsDir: string,
+  executableName: string,
+  iconFileName: string,
+): void {
+  const plist = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleExecutable</key>
+  <string>${executableName}</string>
+  <key>CFBundleIconFile</key>
+  <string>${iconFileName}</string>
+  <key>CFBundleIdentifier</key>
+  <string>${APP_BUNDLE_ID}</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleName</key>
+  <string>${APP_NAME}</string>
+  <key>CFBundleDisplayName</key>
+  <string>${APP_NAME}</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>0.1.0</string>
+  <key>CFBundleVersion</key>
+  <string>0.1.0</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>11.0</string>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+</dict>
+</plist>
+`;
+  fs.writeFileSync(path.join(contentsDir, 'Info.plist'), plist);
+}
+
+function wrapDarwinBundle(
+  rawBinary: string,
+  suffix: string,
+  outDir: string,
+): string {
+  // Wrap the compiled binary into a `.app` bundle so macOS gives it a proper
+  // dock icon instead of inheriting the terminal/parent-process icon.
+  const appName = `${APP_NAME}-${suffix}.app`;
+  const appDir = path.join(outDir, appName);
+  const contentsDir = path.join(appDir, 'Contents');
+  const macosDir = path.join(contentsDir, 'MacOS');
+  const resourcesDir = path.join(contentsDir, 'Resources');
+  fs.rmSync(appDir, { recursive: true, force: true });
+  fs.mkdirSync(macosDir, { recursive: true });
+  fs.mkdirSync(resourcesDir, { recursive: true });
+
+  const executableName = APP_NAME.toLowerCase();
+  const bundledBinary = path.join(macosDir, executableName);
+  fs.copyFileSync(rawBinary, bundledBinary);
+  fs.chmodSync(bundledBinary, 0o755);
+
+  const icnsSrc = ensureIcon();
+  const iconFileName = 'AppIcon.icns';
+  if (icnsSrc) {
+    fs.copyFileSync(icnsSrc, path.join(resourcesDir, iconFileName));
+  }
+
+  writeInfoPlist(contentsDir, executableName, iconFileName.replace(/\.icns$/, ''));
+  // Re-sign the bundled binary so Gatekeeper is happy with its new location.
+  try {
+    execSync(`codesign --remove-signature "${bundledBinary}"`, { stdio: 'ignore' });
+  } catch {}
+  run(
+    `codesign --force --sign - --identifier ${APP_BUNDLE_ID} "${bundledBinary}"`,
+  );
+  return bundledBinary;
+}
+
 function main(): void {
   const target = arg('--target') || currentTarget();
   const suffix = target.replace(/^bun-/, '');
@@ -84,12 +177,27 @@ function main(): void {
   ];
   run(`${bunBin} ${flags.join(' ')}`);
 
-  // macOS: apply ad-hoc codesign so Gatekeeper doesn't SIGKILL the unsigned binary.
   if (target.startsWith('bun-darwin')) {
     try {
       execSync(`codesign --remove-signature "${outFile}"`, { stdio: 'ignore' });
     } catch {}
     run(`codesign --force --sign - --identifier excaliclaude.canvas "${outFile}"`);
+
+    // Also copy AppIcon.icns alongside the raw binary so the runtime FFI
+    // helper can pick it up even when the MCP server spawns the raw binary
+    // (i.e. without going through the .app bundle path).
+    const icnsSrc = ensureIcon();
+    if (icnsSrc) {
+      fs.copyFileSync(icnsSrc, path.join(outDir, 'AppIcon.icns'));
+      console.log(
+        `[build-bin] copied AppIcon.icns to ${path.relative(PROJECT_ROOT, outDir)}`,
+      );
+    }
+
+    const bundled = wrapDarwinBundle(outFile, suffix, outDir);
+    console.log(
+      `\n✓ Built .app bundle at ${path.relative(PROJECT_ROOT, path.dirname(path.dirname(bundled)))}`,
+    );
   }
 
   const stat = fs.statSync(outFile);

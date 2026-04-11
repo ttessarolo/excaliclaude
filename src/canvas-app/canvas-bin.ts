@@ -17,6 +17,7 @@ import os from 'os';
 import path from 'path';
 import { createCanvasApp } from './server-core.js';
 import { getEmbeddedFile } from './embedded-frontend.js';
+import { installMacDockIcon } from './mac-dock-icon.js';
 import type { Request, Response, NextFunction } from 'express';
 
 function parseArg(flag: string, fallback: string): string {
@@ -117,6 +118,17 @@ async function runWebviewOnly(): Promise<void> {
     dlog('webview', `FATAL: Webview() ctor failed: ${err}`);
     process.exit(3);
   }
+
+  // Attach the bundled app icon via AppKit FFI so the dock shows our icon
+  // instead of inheriting the terminal/parent one. Must run after the
+  // Webview ctor (which initializes NSApplication) and before run().
+  try {
+    const result = installMacDockIcon();
+    dlog('webview', `dock icon install: ${JSON.stringify(result)}`);
+  } catch (err) {
+    dlog('webview', `dock icon install threw: ${err}`);
+  }
+
   try {
     webview.title = `ExcaliClaude — ${SESSION_TITLE}`;
   } catch (err) {

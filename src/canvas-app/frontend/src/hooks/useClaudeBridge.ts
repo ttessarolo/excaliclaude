@@ -3,14 +3,14 @@
 // Gestisce in un unico posto:
 //  • stato messaggi Claude (thread della sidebar)
 //  • stato sessione (id, title, status)
-//  • invio segnali umani ("Claude, guarda!", approve, text message)
+//  • invio segnali umani ("Claude, guarda!", text message)
 //  • ricezione di `claude_message` via WebSocket
 //  • caricamento iniziale dello storico messaggi da /api/claude/messages
 //
 // Il hook accetta la WebSocket già esistente (riutilizziamo quella di App.tsx)
 // per non aprire connessioni duplicate.
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChatMessage } from '../components/ChatThread';
 import type { SessionInfo } from '../components/ClaudeSidebar';
 
@@ -18,6 +18,8 @@ export interface ClaudeStatus {
   busy: boolean;
   tool: string | null;
   label: string | null;
+  /** Trailing log of recent activity labels for the current turn. */
+  history: string[];
 }
 
 export interface SignalExtras {
@@ -32,12 +34,14 @@ export interface ClaudeBridge {
   claudeStatus: ClaudeStatus;
   markAllRead: () => void;
   sendSignal: (
-    type: 'look' | 'message' | 'approve',
+    type: 'look' | 'message',
     message?: string,
     extras?: SignalExtras,
   ) => Promise<void>;
   handleWsMessage: (data: any) => void;
 }
+
+const HISTORY_MAX = 6;
 
 export function useClaudeBridge(connected: boolean): ClaudeBridge {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -46,11 +50,11 @@ export function useClaudeBridge(connected: boolean): ClaudeBridge {
     busy: false,
     tool: null,
     label: null,
+    history: [],
   });
+  // Avoid pushing duplicate labels back-to-back when the server debounces.
+  const lastHistoryLabelRef = useRef<string | null>(null);
 
-  // Session info is injected by the canvas server via env at boot time.
-  // The frontend reads it from a well-known meta tag / global (fallback to
-  // generic "ExcaliClaude Session" if absent).
   const session = useMemo<SessionInfo>(() => {
     const globalAny = window as any;
     return {
@@ -60,7 +64,6 @@ export function useClaudeBridge(connected: boolean): ClaudeBridge {
     };
   }, [connected]);
 
-  // Load message history on mount
   useEffect(() => {
     let cancelled = false;
     fetch('/api/claude/messages')
@@ -69,9 +72,7 @@ export function useClaudeBridge(connected: boolean): ClaudeBridge {
         if (cancelled) return;
         if (Array.isArray(data)) setMessages(data);
       })
-      .catch(() => {
-        // silent: history endpoint optional
-      });
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
@@ -84,10 +85,24 @@ export function useClaudeBridge(connected: boolean): ClaudeBridge {
       setMessages((prev) => [...prev, data.message]);
       setHasUnread(true);
     } else if (data.type === 'claude_status') {
-      setClaudeStatus({
-        busy: !!data.busy,
-        tool: data.tool ?? null,
-        label: data.label ?? null,
+      const busy = !!data.busy;
+      const label: string | null = data.label ?? null;
+      setClaudeStatus((prev) => {
+        if (!busy) {
+          lastHistoryLabelRef.current = null;
+          return { busy: false, tool: null, label: null, history: [] };
+        }
+        let history = prev.history;
+        if (label && label !== lastHistoryLabelRef.current) {
+          lastHistoryLabelRef.current = label;
+          history = [...prev.history, label].slice(-HISTORY_MAX);
+        }
+        return {
+          busy: true,
+          tool: data.tool ?? null,
+          label,
+          history,
+        };
       });
     }
   }, []);
@@ -96,11 +111,10 @@ export function useClaudeBridge(connected: boolean): ClaudeBridge {
 
   const sendSignal = useCallback(
     async (
-      type: 'look' | 'message' | 'approve',
+      type: 'look' | 'message',
       message?: string,
       extras?: SignalExtras,
     ): Promise<void> => {
-      // Optimistic: add the human message to the thread
       if (type === 'message' && message) {
         const localMsg: ChatMessage = {
           id: `local-${Date.now()}`,
@@ -119,19 +133,16 @@ export function useClaudeBridge(connected: boolean): ClaudeBridge {
           timestamp: new Date().toISOString(),
         };
         setMessages((prev) => [...prev, localMsg]);
-      } else if (type === 'approve') {
-        const localMsg: ChatMessage = {
-          id: `local-${Date.now()}`,
-          sender: 'system',
-          type: 'system',
-          content: '✅ Approved',
-          timestamp: new Date().toISOString(),
-        };
-        setMessages((prev) => [...prev, localMsg]);
       }
 
-      // Optimistic thinking indicator — the server will confirm via WS.
-      setClaudeStatus({ busy: true, tool: null, label: 'Thinking...' });
+      // Optimistic thinking indicator — server will refine via WS.
+      lastHistoryLabelRef.current = 'Thinking...';
+      setClaudeStatus({
+        busy: true,
+        tool: null,
+        label: 'Thinking...',
+        history: ['Thinking...'],
+      });
 
       try {
         await fetch('/api/claude/signal', {
@@ -146,8 +157,6 @@ export function useClaudeBridge(connected: boolean): ClaudeBridge {
           }),
         });
       } catch (err) {
-        // Errors are visible via status indicator; no need to crash
-        // the UI.
         // eslint-disable-next-line no-console
         console.error('[ExcaliClaude] signal failed', err);
       }
