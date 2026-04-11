@@ -9,7 +9,6 @@ interface Props {
   onSend: (text: string) => void;
   placeholder?: string;
   disabled?: boolean;
-  busy?: boolean;
 }
 
 const MAX_ROWS = 3;
@@ -18,7 +17,6 @@ export function ChatInput({
   onSend,
   placeholder,
   disabled,
-  busy,
 }: Props): JSX.Element {
   const [text, setText] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -59,8 +57,7 @@ export function ChatInput({
       contentPlusPadding + borderY > maxHeight ? 'auto' : 'hidden';
   }, [text]);
 
-  const inputDisabled = disabled || busy;
-  const sendDisabled = inputDisabled || !text.trim();
+  const sendDisabled = disabled || !text.trim();
 
   return (
     <div className="chat-input">
@@ -70,7 +67,7 @@ export function ChatInput({
         onChange={(e) => setText(e.target.value)}
         onKeyDown={onKeyDown}
         placeholder={placeholder || 'Message Claude...'}
-        disabled={inputDisabled}
+        disabled={disabled}
         rows={1}
         aria-label="Message to Claude"
       />
@@ -78,14 +75,9 @@ export function ChatInput({
         type="button"
         onClick={submit}
         disabled={sendDisabled}
-        className={busy ? 'sending' : undefined}
         aria-label="Send message"
       >
-        {busy ? (
-          <span className="send-spinner" aria-hidden="true" />
-        ) : (
-          'Send'
-        )}
+        Send
       </button>
     </div>
   );

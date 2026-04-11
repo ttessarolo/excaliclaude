@@ -100,7 +100,6 @@ export function ClaudeSidebar({
         <ChatInput
           onSend={(text) => onSendSignal('message', text)}
           disabled={!connected}
-          busy={busy}
           placeholder="Message Claude..."
         />
         <div className="signal-buttons">
