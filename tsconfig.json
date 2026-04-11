@@ -30,7 +30,7 @@
     "noEmitOnError": false,
     "preserveConstEnums": true,
     "removeComments": false,
-    "types": ["node"]
+    "types": ["node", "bun-types"]
   },
   "include": [
     "src/**/*.ts"
