@@ -95,6 +95,64 @@ export class SessionManager {
     logger.info(`[SessionManager] Frontend buildato con successo.`);
   }
 
+  /**
+   * Cerca il binary `canvas-<platform>-<arch>` compilato in dist/bin/.
+   * Ritorna il path assoluto o null se non trovato.
+   */
+  private findCanvasBinary(): string | null {
+    const projectRoot = this.findProjectRoot();
+    const p = process.platform;
+    const a = process.arch;
+
+    const map: Record<string, string> = {
+      'darwin-arm64': 'canvas-darwin-arm64',
+      'darwin-x64': 'canvas-darwin-x64',
+      'linux-arm64': 'canvas-linux-arm64',
+      'linux-x64': 'canvas-linux-x64',
+      'win32-x64': 'canvas-windows-x64.exe',
+    };
+    const name = map[`${p}-${a}`];
+    if (!name) return null;
+
+    const candidate = path.join(projectRoot, 'dist', 'bin', name);
+    return fs.existsSync(candidate) ? candidate : null;
+  }
+
+  /**
+   * Spawna il binary standalone (unico processo: server + window).
+   * Ritorna il ChildProcess o null se il binary non esiste.
+   */
+  private spawnCanvasBinary(
+    port: number,
+    sessionId: string,
+    title: string,
+  ): ChildProcess | null {
+    const binary = this.findCanvasBinary();
+    if (!binary) return null;
+
+    logger.info(`[SessionManager] Spawning canvas binary ${binary} for session ${sessionId}`);
+
+    const proc = spawn(binary, [], {
+      env: {
+        ...process.env,
+        PORT: String(port),
+        SESSION_ID: sessionId,
+        SESSION_TITLE: title,
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    proc.stdout?.on('data', (d) => logger.debug(`[canvas-bin:${port}] ${d}`));
+    proc.stderr?.on('data', (d) => logger.debug(`[canvas-bin:${port}:err] ${d}`));
+    proc.on('exit', (code) => {
+      logger.info(`[SessionManager] Canvas binary for ${sessionId} exited with code ${code}`);
+      const s = this.sessions.get(sessionId);
+      if (s) s.status = 'closed';
+    });
+
+    return proc;
+  }
+
   /** Attende che il canvas server risponda su una porta */
   private async waitForReady(port: number, timeoutMs: number): Promise<void> {
     const start = Date.now();
@@ -111,51 +169,61 @@ export class SessionManager {
     throw new Error(`Canvas server on port ${port} not ready after ${timeoutMs}ms`);
   }
 
-  /** Crea una nuova sessione canvas: spawna server + finestra */
+  /** Crea una nuova sessione canvas: spawna binary (o fallback legacy 2-process) */
   async createSession(options: CreateSessionOptions): Promise<CanvasSession> {
-    this.ensureFrontendBuilt();
-
     const id = (webcrypto as any).randomUUID();
     const port = this.nextPort++;
     const url = `http://localhost:${port}`;
-    const runtime = this.getRuntime();
 
-    // Candidate locations of the canvas server entry point.
-    // In dev we spawn the TypeScript source; in production (dist) we spawn the compiled JS.
-    const candidates = [
-      path.resolve(__dirname, '../canvas-app/start-server.ts'),
-      path.resolve(__dirname, '../canvas-app/start-server.js'),
-      path.resolve(__dirname, '../../src/canvas-app/start-server.ts'),
-      path.resolve(__dirname, '../../dist/canvas-app/start-server.js'),
-    ];
-    const startScript = candidates.find((p) => fs.existsSync(p)) || candidates[0];
+    // Prefer standalone binary (single process: server + window)
+    const binaryProcess = this.spawnCanvasBinary(port, id, options.title);
 
-    logger.info(`[SessionManager] Spawning canvas server for session ${id} on port ${port}`);
+    let serverProcess: ChildProcess | null = binaryProcess;
+    let windowProcess: ChildProcess | null = binaryProcess;
 
-    const serverProcess = spawn(runtime, [startScript], {
-      env: {
-        ...process.env,
-        PORT: String(port),
-        SESSION_ID: id,
-        SESSION_TITLE: options.title,
-      },
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
+    if (!binaryProcess) {
+      logger.warn(
+        `[SessionManager] No canvas binary found for ${process.platform}-${process.arch}. ` +
+          `Falling back to legacy dev mode (requires build:frontend).`,
+      );
+      this.ensureFrontendBuilt();
 
-    serverProcess.stdout?.on('data', (d) => logger.debug(`[canvas:${port}] ${d}`));
-    serverProcess.stderr?.on('data', (d) => logger.debug(`[canvas:${port}:err] ${d}`));
-    serverProcess.on('exit', (code) => {
-      logger.info(`[SessionManager] Canvas server for ${id} exited with code ${code}`);
-      const s = this.sessions.get(id);
-      if (s) s.status = 'closed';
-    });
+      const runtime = this.getRuntime();
+      const candidates = [
+        path.resolve(__dirname, '../canvas-app/start-server.ts'),
+        path.resolve(__dirname, '../canvas-app/start-server.js'),
+        path.resolve(__dirname, '../../src/canvas-app/start-server.ts'),
+        path.resolve(__dirname, '../../dist/canvas-app/start-server.js'),
+      ];
+      const startScript = candidates.find((p) => fs.existsSync(p)) || candidates[0];
+
+      logger.info(`[SessionManager] Spawning legacy canvas server for ${id} on port ${port}`);
+
+      serverProcess = spawn(runtime, [startScript], {
+        env: {
+          ...process.env,
+          PORT: String(port),
+          SESSION_ID: id,
+          SESSION_TITLE: options.title,
+        },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      serverProcess.stdout?.on('data', (d) => logger.debug(`[canvas:${port}] ${d}`));
+      serverProcess.stderr?.on('data', (d) => logger.debug(`[canvas:${port}:err] ${d}`));
+      serverProcess.on('exit', (code) => {
+        logger.info(`[SessionManager] Canvas server for ${id} exited with code ${code}`);
+        const s = this.sessions.get(id);
+        if (s) s.status = 'closed';
+      });
+      windowProcess = null;
+    }
 
     const session: CanvasSession = {
       id,
       title: options.title,
       port,
       serverProcess,
-      windowProcess: null,
+      windowProcess,
       status: 'starting',
       createdAt: new Date(),
       lastActivity: new Date(),
@@ -168,13 +236,12 @@ export class SessionManager {
     try {
       await this.waitForReady(port, 15_000);
     } catch (err) {
-      logger.error(`[SessionManager] Canvas server failed to become ready: ${err}`);
-      serverProcess.kill();
+      logger.error(`[SessionManager] Canvas did not become ready: ${err}`);
+      serverProcess?.kill();
       this.sessions.delete(id);
       throw err;
     }
 
-    // Load existing excalidraw file if requested
     if (options.loadFrom) {
       try {
         const content = await fs.promises.readFile(options.loadFrom, 'utf-8');
@@ -189,8 +256,11 @@ export class SessionManager {
       }
     }
 
-    // Open the native window (with fallback chain)
-    session.windowProcess = await this.openWindow(url, options.title, id);
+    // Only open a separate window if we're in legacy fallback mode
+    if (!binaryProcess) {
+      session.windowProcess = await this.openWindow(url, options.title, id);
+    }
+
     session.status = 'ready';
     return session;
   }
