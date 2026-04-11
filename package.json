@@ -17,6 +17,7 @@
     "dev:canvas": "tsx watch src/canvas-app/start-server.ts",
     "type-check": "tsc --noEmit",
     "gen:embedded": "tsx scripts/generate-embedded-frontend.ts",
+    "build:bin": "tsx scripts/build-bin.ts",
     "start": "node dist/mcp/index.js"
   },
   "dependencies": {
