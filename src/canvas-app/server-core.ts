@@ -59,6 +59,18 @@ const wss = new WebSocketServer({ server });
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
+// Request logger (debug level → winston file). Catches every request
+// before any route handler so we can trace signals end-to-end.
+app.use((req: Request, _res: Response, next: NextFunction) => {
+  if (req.path.startsWith('/api/claude') || req.method !== 'GET') {
+    const bodyPreview = req.method === 'POST' && req.body
+      ? ` body=${JSON.stringify(req.body).slice(0, 200)}`
+      : '';
+    logger.debug(`[req] ${req.method} ${req.path}${bodyPreview}`);
+  }
+  next();
+});
+
 if (options.serveStaticFrom) {
   app.use(express.static(options.serveStaticFrom));
 }
@@ -1281,10 +1293,12 @@ function summarizeChanges(changes: ChangeLogEntry[]): string {
 // POST /api/claude/wait-for-signal — long-poll (chiamato dal MCP server)
 app.post('/api/claude/wait-for-signal', async (req: Request, res: Response) => {
   const { timeout_ms = 300_000 } = req.body || {};
+  logger.info(`[signal] wait-for-signal registered (timeout=${timeout_ms}ms, pending=${pendingSignalResolvers.length + 1})`);
   const result = await new Promise<any>((resolve) => {
     const timeout = setTimeout(() => {
       const idx = pendingSignalResolvers.findIndex((p) => p.resolve === resolve);
       if (idx !== -1) pendingSignalResolvers.splice(idx, 1);
+      logger.info(`[signal] wait-for-signal TIMEOUT after ${timeout_ms}ms`);
       resolve({ signal_type: 'timeout' });
     }, timeout_ms);
     pendingSignalResolvers.push({ resolve, timeout });
@@ -1295,6 +1309,7 @@ app.post('/api/claude/wait-for-signal', async (req: Request, res: Response) => {
 // POST /api/claude/signal — chiamato dal frontend quando l'umano clicca
 app.post('/api/claude/signal', (req: Request, res: Response) => {
   const { signal_type, message } = req.body || {};
+  logger.info(`[signal] RECEIVED from frontend: type=${signal_type} message="${(message || '').slice(0, 120)}" pending=${pendingSignalResolvers.length}`);
   const summary = generateCanvasSummary();
   const recentHumanChanges = changeLog.filter(
     (c) => c.author === 'human' && Date.now() - c.timestamp.getTime() < 60_000,
