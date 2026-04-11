@@ -1298,6 +1298,10 @@ interface PendingSignal {
   timeout: NodeJS.Timeout;
 }
 const pendingSignalResolvers: PendingSignal[] = [];
+// Signals received while no wait_for_human is active are buffered here and
+// delivered on the next wait_for_human call (FIFO). Without this, user
+// sidebar messages typed between tool turns are silently dropped.
+const queuedSignals: any[] = [];
 
 interface ChatMessage {
   id: string;
@@ -1428,6 +1432,11 @@ function buildSessionMemoryMarkdown(title: string): string {
 // POST /api/claude/wait-for-signal — long-poll (chiamato dal MCP server)
 app.post('/api/claude/wait-for-signal', async (req: Request, res: Response) => {
   const { timeout_ms = 300_000 } = req.body || {};
+  if (queuedSignals.length > 0) {
+    const queued = queuedSignals.shift()!;
+    logger.info(`[signal] wait-for-signal served from queue (remaining=${queuedSignals.length})`);
+    return res.json(queued);
+  }
   logger.info(`[signal] wait-for-signal registered (timeout=${timeout_ms}ms, pending=${pendingSignalResolvers.length + 1})`);
   const result = await new Promise<any>((resolve) => {
     const timeout = setTimeout(() => {
@@ -1461,10 +1470,15 @@ app.post('/api/claude/signal', (req: Request, res: Response) => {
     sceneUnchangedSinceLastTurn: !!sceneUnchangedSinceLastTurn,
     sessionMemory,
   };
-  while (pendingSignalResolvers.length > 0) {
-    const { resolve, timeout } = pendingSignalResolvers.shift()!;
-    clearTimeout(timeout);
-    resolve(payload);
+  if (pendingSignalResolvers.length > 0) {
+    while (pendingSignalResolvers.length > 0) {
+      const { resolve, timeout } = pendingSignalResolvers.shift()!;
+      clearTimeout(timeout);
+      resolve(payload);
+    }
+  } else {
+    queuedSignals.push(payload);
+    logger.info(`[signal] no pending wait_for_human — queued (depth=${queuedSignals.length})`);
   }
   // Broadcast via WebSocket per informare altri client
   broadcast({ type: 'human_signal', signal_type, message } as any);
@@ -1860,6 +1874,10 @@ const close = async (): Promise<void> => {
 
 const flushPendingSignals = (reason: 'window_closed' | 'shutdown'): number => {
   const count = pendingSignalResolvers.length;
+  if (queuedSignals.length > 0) {
+    logger.info(`[signal] dropping ${queuedSignals.length} queued signal(s) on ${reason}`);
+    queuedSignals.length = 0;
+  }
   if (count === 0) return 0;
   logger.info(`[signal] flushing ${count} pending signal(s) (reason=${reason})`);
   const payload = {
