@@ -59,6 +59,40 @@ npm install
 npm run build
 ```
 
+## Build
+
+### Dev mode
+
+```bash
+npm install
+npm run build          # server + frontend (tsc + vite)
+npm run dev:canvas     # tsx watch canvas server (porta 3000)
+npm run dev            # vite frontend + tsc watch
+```
+
+### Standalone binary
+
+Il canvas runtime è distribuito come **singolo eseguibile Bun** che incorpora
+runtime, server Express, frontend Excalidraw e finestra nativa in un unico
+file — nessuna dipendenza da Bun o Chrome installati sulla macchina utente.
+
+```bash
+# One-time: installa Bun
+curl -fsSL https://bun.sh/install | bash
+
+# Build binary per la platform corrente
+npm run build:bin
+# → dist/bin/canvas-<platform>-<arch>  (~82 MB)
+```
+
+Il `SessionManager` rileva automaticamente il binary in `dist/bin/` e lo
+preferisce allo spawn legacy a 2 processi. Se il binary manca, ricade sul
+dev mode (spawn `node dist/canvas-app/start-server.js` + webview-bun/Chrome).
+
+> **macOS:** i binari `bun build --compile` non firmati vengono bloccati
+> da Gatekeeper. `build-bin.ts` applica un codesign ad-hoc dopo la
+> compilazione, per cui il binary locale funziona senza configurazione.
+
 Poi registra il plugin in Claude Code:
 
 ```bash
