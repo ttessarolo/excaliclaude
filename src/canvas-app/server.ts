@@ -5,7 +5,7 @@ import { createServer } from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
-import logger from './utils/logger.js';
+import logger from '../mcp/utils/logger.js';
 import {
   elements,
   files,
@@ -24,7 +24,7 @@ import {
   InitialElementsMessage,
   Snapshot,
   normalizeFontFamily
-} from './types.js';
+} from '../mcp/types.js';
 import { z } from 'zod';
 import WebSocket from 'ws';
 
@@ -1184,6 +1184,355 @@ app.get('/api/sync/status', (req: Request, res: Response) => {
     },
     websocketClients: clients.size
   });
+});
+
+// ═════════════════════════════════════════════════════════════════
+// ExcaliClaude — Claude-side endpoints
+// ═════════════════════════════════════════════════════════════════
+//
+// These endpoints implement the bidirectional bridge between the MCP
+// server (where Claude runs) and the canvas frontend (where the human
+// draws). See docs/analisi-excaliclaude.md for the full protocol.
+//
+// ── 1. Signal system ────────────────────────────────────────────
+// The MCP tool `wait_for_human` opens a long-poll on /api/claude/wait-for-signal.
+// When the human clicks "👀 Claude, guarda!" the frontend POSTs to
+// /api/claude/signal, which resolves all pending long-polls with the
+// current canvas summary + any message.
+
+interface PendingSignal {
+  resolve: (value: any) => void;
+  timeout: NodeJS.Timeout;
+}
+const pendingSignalResolvers: PendingSignal[] = [];
+
+interface ChatMessage {
+  id: string;
+  sender: 'claude' | 'human';
+  type: 'text' | 'action' | 'question' | 'annotation' | 'system' | 'info' | 'suggestion';
+  content: string;
+  timestamp: string;
+  elements_affected?: string[];
+}
+const claudeMessages: ChatMessage[] = [];
+
+interface ChangeLogEntry {
+  element_id: string;
+  action: 'created' | 'updated' | 'deleted';
+  author: 'human' | 'claude';
+  timestamp: Date;
+}
+const changeLog: ChangeLogEntry[] = [];
+
+function generateCanvasSummary(): string {
+  const count = elements.size;
+  if (count === 0) return 'Canvas vuoto.';
+  const byType: Record<string, number> = {};
+  for (const el of elements.values()) {
+    byType[el.type] = (byType[el.type] || 0) + 1;
+  }
+  const parts = Object.entries(byType)
+    .map(([t, n]) => `${n} ${t}`)
+    .join(', ');
+  return `${count} elementi sul canvas (${parts}).`;
+}
+
+function summarizeChanges(changes: ChangeLogEntry[]): string {
+  if (changes.length === 0) return 'Nessuna modifica dall\'ultimo check.';
+  const created = changes.filter((c) => c.action === 'created').length;
+  const updated = changes.filter((c) => c.action === 'updated').length;
+  const deleted = changes.filter((c) => c.action === 'deleted').length;
+  return `Umano: ${created} creati, ${updated} aggiornati, ${deleted} eliminati.`;
+}
+
+// POST /api/claude/wait-for-signal — long-poll (chiamato dal MCP server)
+app.post('/api/claude/wait-for-signal', async (req: Request, res: Response) => {
+  const { timeout_ms = 300_000 } = req.body || {};
+  const result = await new Promise<any>((resolve) => {
+    const timeout = setTimeout(() => {
+      const idx = pendingSignalResolvers.findIndex((p) => p.resolve === resolve);
+      if (idx !== -1) pendingSignalResolvers.splice(idx, 1);
+      resolve({ signal_type: 'timeout' });
+    }, timeout_ms);
+    pendingSignalResolvers.push({ resolve, timeout });
+  });
+  res.json(result);
+});
+
+// POST /api/claude/signal — chiamato dal frontend quando l'umano clicca
+app.post('/api/claude/signal', (req: Request, res: Response) => {
+  const { signal_type, message } = req.body || {};
+  const summary = generateCanvasSummary();
+  const recentHumanChanges = changeLog.filter(
+    (c) => c.author === 'human' && Date.now() - c.timestamp.getTime() < 60_000,
+  );
+  const payload = {
+    signal_type: signal_type || 'look',
+    message,
+    canvas_summary: summary,
+    changed_elements: recentHumanChanges,
+    element_count: elements.size,
+  };
+  while (pendingSignalResolvers.length > 0) {
+    const { resolve, timeout } = pendingSignalResolvers.shift()!;
+    clearTimeout(timeout);
+    resolve(payload);
+  }
+  // Broadcast via WebSocket per informare altri client
+  broadcast({ type: 'human_signal', signal_type, message } as any);
+  res.json({ ok: true });
+});
+
+// POST /api/claude/message — Claude manda un messaggio alla sidebar
+app.post('/api/claude/message', (req: Request, res: Response) => {
+  const msg: ChatMessage = {
+    id: generateId(),
+    sender: 'claude',
+    type: (req.body?.type as any) || 'info',
+    content: req.body?.message || '',
+    timestamp: req.body?.timestamp || new Date().toISOString(),
+  };
+  claudeMessages.push(msg);
+  broadcast({ type: 'claude_message', message: msg } as any);
+  res.json({ ok: true, id: msg.id });
+});
+
+// GET /api/claude/messages — storico messaggi (frontend load)
+app.get('/api/claude/messages', (req: Request, res: Response) => {
+  res.json(claudeMessages);
+});
+
+// ── 2. Annotations ─────────────────────────────────────────────
+// Crea elementi Excalidraw che formano un'annotazione Claude (rettangolo
+// colorato + testo + freccia tratteggiata verso il target).
+
+function getElementBounds(el: ServerElement): {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+  centerX: number;
+  centerY: number;
+} {
+  const x = el.x || 0;
+  const y = el.y || 0;
+  const w = (el as any).width || 0;
+  const h = (el as any).height || 0;
+  return {
+    left: x,
+    right: x + w,
+    top: y,
+    bottom: y + h,
+    centerX: x + w / 2,
+    centerY: y + h / 2,
+  };
+}
+
+function createAnnotationElements(opts: {
+  target?: ServerElement;
+  text: string;
+  position: 'top' | 'right' | 'bottom' | 'left' | 'auto';
+  style: 'note' | 'comment' | 'highlight' | 'question';
+}): ServerElement[] {
+  const { target, text, style } = opts;
+  let position = opts.position;
+
+  let x: number, y: number;
+  if (target) {
+    const b = getElementBounds(target);
+    const offset = 30;
+    if (position === 'auto') position = 'right';
+    switch (position) {
+      case 'right':
+        x = b.right + offset;
+        y = b.top;
+        break;
+      case 'left':
+        x = b.left - 250 - offset;
+        y = b.top;
+        break;
+      case 'top':
+        x = b.left;
+        y = b.top - 80 - offset;
+        break;
+      case 'bottom':
+        x = b.left;
+        y = b.bottom + offset;
+        break;
+      default:
+        x = b.right + offset;
+        y = b.top;
+    }
+  } else {
+    x = 50;
+    y = 50;
+  }
+
+  const styleColors: Record<
+    string,
+    { bg: string; stroke: string; text: string }
+  > = {
+    note: { bg: '#F0EDFF', stroke: '#7C5CFC', text: '#1A1523' },
+    comment: { bg: '#FFF8E1', stroke: '#F59E0B', text: '#78350F' },
+    highlight: { bg: '#ECFDF5', stroke: '#10B981', text: '#064E3B' },
+    question: { bg: '#EFF6FF', stroke: '#3B82F6', text: '#1E3A5F' },
+  };
+  const colors = styleColors[style] || styleColors.note;
+
+  const textWidth = Math.min(Math.max(text.length * 7, 120), 240);
+  const approxLines = Math.max(1, Math.ceil((text.length * 7) / textWidth));
+  const textHeight = approxLines * 20 + 16;
+
+  const rectId = generateId();
+  const textId = generateId();
+  const arrowId = generateId();
+  const groupId = generateId();
+  const now = new Date().toISOString();
+
+  const elems: ServerElement[] = [];
+
+  // 1. Rounded rectangle container
+  elems.push({
+    id: rectId,
+    type: 'rectangle',
+    x,
+    y,
+    width: textWidth + 24,
+    height: textHeight,
+    strokeColor: colors.stroke,
+    backgroundColor: colors.bg,
+    strokeWidth: 1,
+    opacity: 90,
+    boundElements: [{ id: textId, type: 'text' }],
+    createdAt: now,
+    updatedAt: now,
+    version: 1,
+  } as any);
+
+  // 2. Text inside the rectangle
+  elems.push({
+    id: textId,
+    type: 'text',
+    x: x + 12,
+    y: y + 8,
+    width: textWidth,
+    height: textHeight - 16,
+    text,
+    fontSize: 14,
+    fontFamily: 1,
+    strokeColor: colors.text,
+    containerId: rectId,
+    createdAt: now,
+    updatedAt: now,
+    version: 1,
+  } as any);
+
+  // 3. Dashed arrow to target (if any)
+  if (target) {
+    const tb = getElementBounds(target);
+    const startX = x;
+    const startY = y + textHeight / 2;
+    elems.push({
+      id: arrowId,
+      type: 'arrow',
+      x: startX,
+      y: startY,
+      width: tb.centerX - startX,
+      height: tb.centerY - startY,
+      strokeColor: colors.stroke,
+      strokeStyle: 'dashed',
+      strokeWidth: 1,
+      opacity: 60,
+      start: { id: rectId },
+      end: { id: target.id },
+      createdAt: now,
+      updatedAt: now,
+      version: 1,
+    } as any);
+  }
+
+  return elems;
+}
+
+// POST /api/claude/annotate
+app.post('/api/claude/annotate', (req: Request, res: Response) => {
+  try {
+    const { target_element_id, text, position = 'auto', style = 'note' } = req.body || {};
+    const target = target_element_id ? elements.get(target_element_id) : undefined;
+    const annotationElements = createAnnotationElements({
+      target,
+      text: text || '',
+      position,
+      style,
+    });
+    for (const el of annotationElements) {
+      elements.set(el.id, el);
+      changeLog.push({
+        element_id: el.id,
+        action: 'created',
+        author: 'claude',
+        timestamp: new Date(),
+      });
+    }
+    broadcast({
+      type: 'elements_batch_created',
+      elements: annotationElements,
+      count: annotationElements.length,
+    } as any);
+    res.json({
+      ok: true,
+      elements_created: annotationElements.length,
+      annotation_id: annotationElements[0]?.id,
+    });
+  } catch (err) {
+    logger.error('annotate failed', err);
+    res.status(500).json({ ok: false, error: (err as Error).message });
+  }
+});
+
+// ── 3. Human changes tracking ──────────────────────────────────
+// GET /api/claude/human-changes?since=<iso>
+app.get('/api/claude/human-changes', (req: Request, res: Response) => {
+  const since = req.query.since ? new Date(req.query.since as string) : new Date(0);
+  const humanChanges = changeLog.filter(
+    (c) => c.author === 'human' && c.timestamp > since,
+  );
+  res.json({
+    changes: humanChanges,
+    summary: summarizeChanges(humanChanges),
+    since: since.toISOString(),
+    until: new Date().toISOString(),
+  });
+});
+
+// ── 4. Scene export (per save_session MCP tool) ────────────────
+app.get('/api/export/scene', (req: Request, res: Response) => {
+  const scene = {
+    type: 'excalidraw',
+    version: 2,
+    source: 'excaliclaude',
+    elements: Array.from(elements.values()),
+    appState: { viewBackgroundColor: '#FFFFFF' },
+    files: Object.fromEntries(files),
+  };
+  res.json(scene);
+});
+
+// POST /api/import — re-idrata una scena caricata da file .excalidraw
+app.post('/api/import', (req: Request, res: Response) => {
+  try {
+    const scene = req.body || {};
+    if (Array.isArray(scene.elements)) {
+      elements.clear();
+      for (const el of scene.elements as ServerElement[]) {
+        elements.set(el.id, el);
+      }
+      broadcast({ type: 'initial_elements', elements: Array.from(elements.values()) });
+    }
+    res.json({ ok: true, count: elements.size });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: (err as Error).message });
+  }
 });
 
 // Error handling middleware
