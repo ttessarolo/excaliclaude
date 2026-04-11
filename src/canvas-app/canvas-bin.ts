@@ -266,31 +266,47 @@ async function runServer(): Promise<void> {
   // Shared handle for the webview child, wired below after spawn. The
   // /api/claude/quit endpoint closes it first so the native window
   // disappears, then kills the HTTP server and exits the process.
-  const quitState: { child: ReturnType<typeof spawn> | null; server: any } = {
+  const quitState: {
+    child: ReturnType<typeof spawn> | null;
+    server: any;
+    flush: ((reason: 'window_closed' | 'shutdown') => number) | null;
+  } = {
     child: null,
     server: null,
+    flush: null,
   };
 
-  const { server } = createCanvasApp({
+  const { server, flushPendingSignals } = createCanvasApp({
     sessionId: SESSION_ID,
     title: SESSION_TITLE,
     loadScenePath: LOAD_SCENE_PATH ? path.resolve(LOAD_SCENE_PATH) : undefined,
     rootHandler: (req, res, next) => void serveEmbedded(req, res, next),
     staticHandler: (req, res, next) => void serveEmbedded(req, res, next),
     onQuit: () => {
-      dlog('server', 'onQuit invoked — killing webview child and exiting');
+      dlog('server', 'onQuit invoked — draining pending signals and exiting');
+      try {
+        const drained = flushPendingSignals('shutdown');
+        if (drained > 0) dlog('server', `onQuit drained ${drained} pending signal(s)`);
+      } catch (err) {
+        dlog('server', `onQuit flush failed: ${err}`);
+      }
       try {
         quitState.child?.kill('SIGTERM');
       } catch (err) {
         dlog('server', `onQuit kill failed: ${err}`);
       }
-      try {
-        quitState.server?.close();
-      } catch {}
-      setTimeout(() => process.exit(0), 250);
+      // Grace period so drained /api/claude/wait-for-signal responses can
+      // actually be written to the client socket before we tear down.
+      setTimeout(() => {
+        try {
+          quitState.server?.close();
+        } catch {}
+        process.exit(0);
+      }, 250);
     },
   });
   quitState.server = server;
+  quitState.flush = flushPendingSignals;
 
   await new Promise<void>((resolve, reject) => {
     server.once('error', (err) => {
@@ -355,7 +371,17 @@ async function runServer(): Promise<void> {
     });
   });
 
-  dlog('server', `webview child done (code=${exitCode}), shutting down HTTP server`);
+  dlog('server', `webview child done (code=${exitCode}), draining pending signals`);
+  try {
+    const drained = flushPendingSignals('window_closed');
+    if (drained > 0) dlog('server', `drained ${drained} pending wait_for_human signal(s)`);
+  } catch (err) {
+    dlog('server', `flush on child-exit failed: ${err}`);
+  }
+  // Grace period so the drained responses can flush to the MCP client
+  // before we tear down the HTTP server. Without this, the client sees
+  // a severed socket ("fetch failed") and loses the structured payload.
+  await new Promise<void>((r) => setTimeout(r, 200));
   console.error(`[canvas-bin] Window closed, shutting down`);
   server.close();
   process.exit(exitCode);

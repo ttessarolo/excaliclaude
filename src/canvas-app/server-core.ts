@@ -56,6 +56,11 @@ export interface CanvasApp {
   server: HttpServer;
   wss: WebSocketServer;
   close(): Promise<void>;
+  /** Resolve tutte le long-poll `wait_for_human` pendenti con il `signal_type`
+   * indicato, PRIMA di chiudere il server. Necessario perché altrimenti
+   * chiudere l'HTTP server abbatte la socket del client MCP con un
+   * "fetch failed" opaco (vedi canvas-bin child-exit flow). */
+  flushPendingSignals(reason: 'window_closed' | 'shutdown'): number;
 }
 
 export function createCanvasApp(options: CanvasAppOptions = {}): CanvasApp {
@@ -1853,5 +1858,22 @@ const close = async (): Promise<void> => {
   await new Promise<void>((resolve) => server.close(() => resolve()));
 };
 
-return { app, server, wss, close };
+const flushPendingSignals = (reason: 'window_closed' | 'shutdown'): number => {
+  const count = pendingSignalResolvers.length;
+  if (count === 0) return 0;
+  logger.info(`[signal] flushing ${count} pending signal(s) (reason=${reason})`);
+  const payload = {
+    signal_type: reason,
+    canvas_summary: generateCanvasSummary(),
+    element_count: elements.size,
+  };
+  while (pendingSignalResolvers.length > 0) {
+    const { resolve, timeout } = pendingSignalResolvers.shift()!;
+    clearTimeout(timeout);
+    resolve(payload);
+  }
+  return count;
+};
+
+return { app, server, wss, close, flushPendingSignals };
 }

@@ -413,12 +413,23 @@ export class SessionManager {
     }
   }
 
-  /** Risolve l'URL base per una sessione specifica o quella attiva */
+  /** Risolve l'URL base per una sessione specifica o quella attiva.
+   *  Lancia un errore se la sessione è stata chiusa (status='closed') in
+   *  modo che i tool MCP possano ritornare un messaggio strutturato invece
+   *  di andare in fetch contro un server morto (→ "fetch failed" opaco). */
   getSessionUrl(sessionId?: string): string {
     const id = sessionId || this.activeSessionId;
     if (id) {
       const s = this.sessions.get(id);
-      if (s) return `http://localhost:${s.port}`;
+      if (s) {
+        if (s.status === 'closed') {
+          throw new Error(
+            `Canvas session "${s.title}" è stata chiusa. ` +
+              'Usa `open_canvas` per riaprirla.',
+          );
+        }
+        return `http://localhost:${s.port}`;
+      }
     }
     return this.fallbackUrl;
   }

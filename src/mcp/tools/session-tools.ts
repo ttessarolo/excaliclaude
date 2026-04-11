@@ -147,6 +147,25 @@ type ToolResult = {
   isError?: boolean;
 };
 
+/** Resolve session URL, returning a structured ToolResult error if the
+ *  session is closed. Use in tools that issue HTTP requests to the canvas
+ *  so that a closed session fails fast with a clear message instead of
+ *  hitting a dead port and surfacing an opaque "fetch failed". */
+function resolveBaseUrlOrError(
+  sessionId: string | undefined,
+): { url: string; error?: undefined } | { url?: undefined; error: ToolResult } {
+  try {
+    return { url: sessionManager.getSessionUrl(sessionId) };
+  } catch (err) {
+    return {
+      error: {
+        content: [{ type: 'text', text: (err as Error).message }],
+        isError: true,
+      },
+    };
+  }
+}
+
 /**
  * Dispatcher per i tool ExcaliClaude. Ritorna `null` se il tool non appartiene
  * alla suite session-tools (così il chiamante può proseguire la risoluzione o
@@ -197,7 +216,9 @@ export async function registerSessionToolsLegacy(
 
     case 'wait_for_human': {
       const timeoutMs = a.timeout_ms ?? 300_000;
-      const baseUrl = sessionManager.getSessionUrl(a.session_id);
+      const resolved = resolveBaseUrlOrError(a.session_id);
+      if (resolved.error) return resolved.error;
+      const baseUrl = resolved.url;
       try {
         const res = await fetch(`${baseUrl}/api/claude/wait-for-signal`, {
           method: 'POST',
@@ -207,6 +228,19 @@ export async function registerSessionToolsLegacy(
         });
         const result: any = await res.json();
         const content: ToolResult['content'] = [];
+        if (result.signal_type === 'window_closed' || result.signal_type === 'shutdown') {
+          return {
+            content: [
+              {
+                type: 'text',
+                text:
+                  'La finestra del canvas è stata chiusa. La sessione è ' +
+                  'terminata. Usa `open_canvas` per riaprire un nuovo canvas ' +
+                  'quando vuoi continuare.',
+              },
+            ],
+          };
+        }
         if (result.signal_type === 'timeout') {
           content.push({ type: 'text', text: 'Timeout: l\'umano non ha segnalato.' });
         } else {
@@ -245,8 +279,15 @@ export async function registerSessionToolsLegacy(
         }
         return { content };
       } catch (err) {
+        const msg = (err as Error).message || '';
+        const isConnErr = /fetch failed|ECONNREFUSED|ECONNRESET|network|connect/i.test(msg);
+        const text = isConnErr
+          ? 'Il canvas non risponde (connessione interrotta). ' +
+            'La finestra è stata chiusa o il processo canvas è morto. ' +
+            'Usa `open_canvas` per riaprire e riprendere la sessione.'
+          : `Errore wait_for_human: ${msg}`;
         return {
-          content: [{ type: 'text', text: `Errore wait_for_human: ${(err as Error).message}` }],
+          content: [{ type: 'text', text }],
           isError: true,
         };
       }
@@ -256,7 +297,9 @@ export async function registerSessionToolsLegacy(
       if (!a.path) {
         return { content: [{ type: 'text', text: 'Parametro path richiesto' }], isError: true };
       }
-      const baseUrl = sessionManager.getSessionUrl(a.session_id);
+      const resolvedSave = resolveBaseUrlOrError(a.session_id);
+      if (resolvedSave.error) return resolvedSave.error;
+      const baseUrl = resolvedSave.url;
       try {
         const sceneRes = await fetch(`${baseUrl}/api/export/scene`);
         if (!sceneRes.ok) {
@@ -279,7 +322,9 @@ export async function registerSessionToolsLegacy(
     }
 
     case 'send_message_to_canvas': {
-      const baseUrl = sessionManager.getSessionUrl(a.session_id);
+      const resolvedMsg = resolveBaseUrlOrError(a.session_id);
+      if (resolvedMsg.error) return resolvedMsg.error;
+      const baseUrl = resolvedMsg.url;
       try {
         await fetch(`${baseUrl}/api/claude/message`, {
           method: 'POST',
@@ -302,7 +347,9 @@ export async function registerSessionToolsLegacy(
     }
 
     case 'annotate': {
-      const baseUrl = sessionManager.getSessionUrl(a.session_id);
+      const resolvedAnn = resolveBaseUrlOrError(a.session_id);
+      if (resolvedAnn.error) return resolvedAnn.error;
+      const baseUrl = resolvedAnn.url;
       try {
         const res = await fetch(`${baseUrl}/api/claude/annotate`, {
           method: 'POST',
@@ -332,7 +379,9 @@ export async function registerSessionToolsLegacy(
     }
 
     case 'get_human_changes': {
-      const baseUrl = sessionManager.getSessionUrl(a.session_id);
+      const resolvedHc = resolveBaseUrlOrError(a.session_id);
+      if (resolvedHc.error) return resolvedHc.error;
+      const baseUrl = resolvedHc.url;
       const qs = a.since ? `?since=${encodeURIComponent(a.since)}` : '';
       try {
         const res = await fetch(`${baseUrl}/api/claude/human-changes${qs}`);
