@@ -14,6 +14,7 @@ import { ClaudeSidebar } from './components/ClaudeSidebar'
 import { QuitModal } from './components/QuitModal'
 import { useClaudeBridge } from './hooks/useClaudeBridge'
 import { hashScene } from './lib/sceneHash'
+import { registerExcalidrawAPIForClipboard } from './lib/clipboard-bridge'
 import { trackElementAuthor } from './utils/element-author'
 import './styles/claude-theme.css'
 
@@ -966,7 +967,10 @@ function App(): JSX.Element {
           style={{ width: '100%', height: '100%' }}
         >
           <Excalidraw
-            excalidrawAPI={(api: ExcalidrawAPIRefValue) => setExcalidrawAPI(api)}
+            excalidrawAPI={(api: ExcalidrawAPIRefValue) => {
+              setExcalidrawAPI(api)
+              registerExcalidrawAPIForClipboard(api as any)
+            }}
             UIOptions={{ canvasActions: { toggleTheme: true } }}
             onChange={(elements, appState) => {
               // Track elements created through UI as "human"

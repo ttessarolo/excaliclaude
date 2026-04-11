@@ -18,6 +18,7 @@ import path from 'path';
 import { createCanvasApp } from './server-core.js';
 import { getEmbeddedFile } from './embedded-frontend.js';
 import { installMacDockIcon } from './mac-dock-icon.js';
+import { readPasteboardString, writePasteboardString } from './mac-pasteboard.js';
 import type { Request, Response, NextFunction } from 'express';
 
 function parseArg(flag: string, fallback: string): string {
@@ -127,6 +128,33 @@ async function runWebviewOnly(): Promise<void> {
     dlog('webview', `dock icon install: ${JSON.stringify(result)}`);
   } catch (err) {
     dlog('webview', `dock icon install threw: ${err}`);
+  }
+
+  // OS pasteboard bridge: expose two async callbacks to the frontend so
+  // the Excalidraw canvas can mirror copy/cut to the macOS pasteboard and
+  // synthesize paste events from it. See clipboard-bridge.ts.
+  try {
+    if (typeof webview.bind === 'function') {
+      webview.bind('__excaliclaude_pb_read', () => {
+        try {
+          return readPasteboardString() ?? '';
+        } catch (err) {
+          dlog('clipboard', `pb_read threw: ${err}`);
+          return '';
+        }
+      });
+      webview.bind('__excaliclaude_pb_write', (text: string) => {
+        try {
+          return writePasteboardString(text ?? '');
+        } catch (err) {
+          dlog('clipboard', `pb_write threw: ${err}`);
+          return false;
+        }
+      });
+      dlog('clipboard', 'pasteboard bridge bound');
+    }
+  } catch (err) {
+    dlog('clipboard', `bind failed: ${err}`);
   }
 
   try {

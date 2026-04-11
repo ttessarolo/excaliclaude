@@ -97,6 +97,8 @@ function writeInfoPlist(
   <string>11.0</string>
   <key>NSHighResolutionCapable</key>
   <true/>
+  <key>NSPasteboardUsageDescription</key>
+  <string>ExcaliClaude syncs copy and paste between the canvas and other apps.</string>
 </dict>
 </plist>
 `;
