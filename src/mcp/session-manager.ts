@@ -304,8 +304,6 @@ export class SessionManager {
             openWindowScript,
             '--url', url,
             '--title', `ExcaliClaude — ${title}`,
-            '--width', '1280',
-            '--height', '800',
             '--session-id', sessionId,
           ],
           { stdio: ['ignore', 'pipe', 'pipe'] },

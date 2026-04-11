@@ -10,16 +10,49 @@
 // Linux, o Bun non installato), il processo fallisce subito e il
 // SessionManager cade sul fallback Chrome app-mode.
 
+import { execFileSync } from 'child_process';
+
 function parseArg(flag: string): string | undefined {
   const idx = process.argv.indexOf(flag);
   return idx !== -1 ? process.argv[idx + 1] : undefined;
 }
 
+function getMacMainScreenSize(): { width: number; height: number } | null {
+  if (process.platform !== 'darwin') return null;
+  try {
+    const out = execFileSync(
+      '/usr/bin/osascript',
+      [
+        '-l',
+        'JavaScript',
+        '-e',
+        'ObjC.import("AppKit"); var f = $.NSScreen.mainScreen.frame; JSON.stringify({w: f.size.width, h: f.size.height})',
+      ],
+      { encoding: 'utf8', timeout: 1500 },
+    );
+    const parsed = JSON.parse(out.trim());
+    const w = Math.round(Number(parsed.w));
+    const h = Math.round(Number(parsed.h));
+    if (w > 0 && h > 0) return { width: w, height: h };
+  } catch {}
+  return null;
+}
+
+function defaultSize(): { width: number; height: number } {
+  const screen = getMacMainScreenSize();
+  if (!screen) return { width: 1280, height: 800 };
+  return {
+    width: Math.round(screen.width * 0.85),
+    height: Math.round(screen.height * 0.85),
+  };
+}
+
 async function main(): Promise<void> {
   const url = parseArg('--url') || process.env.WINDOW_URL;
   const title = parseArg('--title') || 'ExcaliClaude';
-  const width = parseInt(parseArg('--width') || '1280', 10);
-  const height = parseInt(parseArg('--height') || '800', 10);
+  const fallback = defaultSize();
+  const width = parseInt(parseArg('--width') || String(fallback.width), 10);
+  const height = parseInt(parseArg('--height') || String(fallback.height), 10);
   const sessionId = parseArg('--session-id') || 'default';
 
   if (!url) {

@@ -11,7 +11,7 @@
 // processo che lo invoca: tenere server HTTP e webview nello stesso processo
 // fa sì che il server non risponda più alle richieste del webview.
 
-import { spawn } from 'child_process';
+import { spawn, execFileSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -30,8 +30,51 @@ const PORT = parseInt(process.env.PORT || parseArg('--port', '3100'), 10);
 const HOST = process.env.HOST || '127.0.0.1';
 const SESSION_ID = process.env.SESSION_ID || parseArg('--session-id', 'default');
 const SESSION_TITLE = process.env.SESSION_TITLE || parseArg('--title', 'ExcaliClaude');
-const WINDOW_WIDTH = parseInt(process.env.WINDOW_WIDTH || parseArg('--width', '1280'), 10);
-const WINDOW_HEIGHT = parseInt(process.env.WINDOW_HEIGHT || parseArg('--height', '800'), 10);
+// Main-screen size on macOS via JXA → NSScreen.mainScreen.frame. Fast (~100ms),
+// synchronous, no FFI boilerplate. Returns null on non-macOS or on failure so
+// callers can fall back to hard-coded defaults.
+function getMacMainScreenSize(): { width: number; height: number } | null {
+  if (process.platform !== 'darwin') return null;
+  try {
+    const out = execFileSync(
+      '/usr/bin/osascript',
+      [
+        '-l',
+        'JavaScript',
+        '-e',
+        'ObjC.import("AppKit"); var f = $.NSScreen.mainScreen.frame; JSON.stringify({w: f.size.width, h: f.size.height})',
+      ],
+      { encoding: 'utf8', timeout: 1500 },
+    );
+    const parsed = JSON.parse(out.trim());
+    const w = Math.round(Number(parsed.w));
+    const h = Math.round(Number(parsed.h));
+    if (w > 0 && h > 0) return { width: w, height: h };
+  } catch {}
+  return null;
+}
+
+const FALLBACK_WINDOW_WIDTH = 1280;
+const FALLBACK_WINDOW_HEIGHT = 800;
+
+function computeDefaultWindowSize(): { width: number; height: number } {
+  const screen = getMacMainScreenSize();
+  if (!screen) return { width: FALLBACK_WINDOW_WIDTH, height: FALLBACK_WINDOW_HEIGHT };
+  return {
+    width: Math.round(screen.width * 0.85),
+    height: Math.round(screen.height * 0.85),
+  };
+}
+
+const { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT } = computeDefaultWindowSize();
+const WINDOW_WIDTH = parseInt(
+  process.env.WINDOW_WIDTH || parseArg('--width', String(DEFAULT_WIDTH)),
+  10,
+);
+const WINDOW_HEIGHT = parseInt(
+  process.env.WINDOW_HEIGHT || parseArg('--height', String(DEFAULT_HEIGHT)),
+  10,
+);
 const HEADLESS = process.env.HEADLESS === '1' || process.argv.includes('--headless');
 const WEBVIEW_ONLY = process.argv.includes('--webview-only');
 const WEBVIEW_URL = parseArg('--url', `http://${HOST}:${PORT}`);

@@ -1,14 +1,17 @@
 #!/usr/bin/env node
-// Generate a temporary ExcaliClaude app icon (1024×1024 PNG + .icns).
+// Generate the ExcaliClaude app icon from `assets/icon/source.png`.
 //
-// Design: rounded square, purple gradient (#7C5CFC → #4c3a9e), with a white
-// stylized "X" mark. Zero external assets — fully procedural so this runs
-// anywhere without needing an SVG/PNG source in the repo. Swap with a real
-// icon whenever we have time to design one.
+// Pipeline:
+//   1. Load source PNG (any square size; recommended ≥1024).
+//   2. Flood-fill near-white pixels starting from the four corners so the
+//      rounded-rect background ends with a fully transparent outside.
+//   3. Write master `assets/icon/icon.png` (1024×1024).
+//   4. On macOS, render the required iconset sizes via `sips` and call
+//      `iconutil` to produce `assets/icon/icon.icns`.
 //
-// Output:
-//   assets/icon/icon.png
-//   assets/icon/icon.icns  (only on macOS, via /usr/bin/iconutil)
+// The flood-fill approach preserves the white highlight inside the artwork
+// (it only clears pixels connected to the corners), which a simple
+// "white → transparent" replace would incorrectly wipe.
 
 import fs from 'fs';
 import path from 'path';
@@ -20,129 +23,90 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 
-interface RGBA {
-  r: number;
-  g: number;
-  b: number;
-  a: number;
+const WHITE_THRESHOLD = 235;
+
+function isNearWhite(r: number, g: number, b: number, a: number): boolean {
+  if (a < 8) return true;
+  return r >= WHITE_THRESHOLD && g >= WHITE_THRESHOLD && b >= WHITE_THRESHOLD;
 }
 
-function hexToRgb(hex: string): { r: number; g: number; b: number } {
-  const m = hex.replace('#', '');
-  return {
-    r: parseInt(m.slice(0, 2), 16),
-    g: parseInt(m.slice(2, 4), 16),
-    b: parseInt(m.slice(4, 6), 16),
-  };
-}
+function floodFillCornersTransparent(png: PNG): void {
+  const { width, height, data } = png;
+  const visited = new Uint8Array(width * height);
+  const stack: number[] = [];
 
-function lerp(a: number, b: number, t: number): number {
-  return a + (b - a) * t;
-}
+  const seeds: Array<[number, number]> = [
+    [0, 0],
+    [width - 1, 0],
+    [0, height - 1],
+    [width - 1, height - 1],
+  ];
+  for (const [sx, sy] of seeds) stack.push(sy * width + sx);
 
-/** Signed distance from point (px,py) to rounded rect at origin. */
-function sdfRoundedRect(
-  px: number,
-  py: number,
-  size: number,
-  radius: number,
-): number {
-  const half = size / 2;
-  const dx = Math.abs(px - half) - (half - radius);
-  const dy = Math.abs(py - half) - (half - radius);
-  const ax = Math.max(dx, 0);
-  const ay = Math.max(dy, 0);
-  return Math.min(Math.max(dx, dy), 0) + Math.hypot(ax, ay) - radius;
-}
+  while (stack.length) {
+    const p = stack.pop()!;
+    if (visited[p]) continue;
+    visited[p] = 1;
+    const idx = p << 2;
+    const r = data[idx];
+    const g = data[idx + 1];
+    const b = data[idx + 2];
+    const a = data[idx + 3];
+    if (!isNearWhite(r, g, b, a)) continue;
+    data[idx + 3] = 0;
 
-/** Distance from point to line segment. */
-function distToSegment(
-  px: number,
-  py: number,
-  x1: number,
-  y1: number,
-  x2: number,
-  y2: number,
-): number {
-  const dx = x2 - x1;
-  const dy = y2 - y1;
-  const len2 = dx * dx + dy * dy;
-  let t = ((px - x1) * dx + (py - y1) * dy) / len2;
-  t = Math.max(0, Math.min(1, t));
-  const cx = x1 + t * dx;
-  const cy = y1 + t * dy;
-  return Math.hypot(px - cx, py - cy);
-}
-
-function renderIcon(size: number): Buffer {
-  const png = new PNG({ width: size, height: size });
-  const top = hexToRgb('#7C5CFC');
-  const bottom = hexToRgb('#4C3A9E');
-  const white = { r: 255, g: 255, b: 255 };
-  const radius = size * 0.22;
-  const margin = size * 0.08;
-  const inner = size - margin * 2;
-
-  // Bold "X" geometry: two diagonals with stroke width ~size/10.
-  const strokeW = size * 0.11;
-  const x1 = margin + inner * 0.18;
-  const y1 = margin + inner * 0.18;
-  const x2 = margin + inner * 0.82;
-  const y2 = margin + inner * 0.82;
-  const x3 = margin + inner * 0.82;
-  const y3 = margin + inner * 0.18;
-  const x4 = margin + inner * 0.18;
-  const y4 = margin + inner * 0.82;
-
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      const idx = (y * size + x) << 2;
-
-      // Rounded rect mask (with 1.5 px antialiasing).
-      const sdf = sdfRoundedRect(x + 0.5, y + 0.5, size, radius);
-      const rectAlpha = Math.max(0, Math.min(1, 0.5 - sdf));
-      if (rectAlpha <= 0) {
-        png.data[idx] = 0;
-        png.data[idx + 1] = 0;
-        png.data[idx + 2] = 0;
-        png.data[idx + 3] = 0;
-        continue;
-      }
-
-      // Gradient fill (top → bottom).
-      const t = y / (size - 1);
-      let r = lerp(top.r, bottom.r, t);
-      let g = lerp(top.g, bottom.g, t);
-      let b = lerp(top.b, bottom.b, t);
-
-      // Diagonal cross mask: min distance to either diagonal segment.
-      const d1 = distToSegment(x + 0.5, y + 0.5, x1, y1, x2, y2);
-      const d2 = distToSegment(x + 0.5, y + 0.5, x3, y3, x4, y4);
-      const dMin = Math.min(d1, d2);
-      const stroke = Math.max(0, Math.min(1, (strokeW * 0.5 - dMin) / 1.2));
-      if (stroke > 0) {
-        r = lerp(r, white.r, stroke);
-        g = lerp(g, white.g, stroke);
-        b = lerp(b, white.b, stroke);
-      }
-
-      png.data[idx] = Math.round(r);
-      png.data[idx + 1] = Math.round(g);
-      png.data[idx + 2] = Math.round(b);
-      png.data[idx + 3] = Math.round(rectAlpha * 255);
-    }
+    const x = p % width;
+    const y = (p - x) / width;
+    if (x > 0) stack.push(p - 1);
+    if (x < width - 1) stack.push(p + 1);
+    if (y > 0) stack.push(p - width);
+    if (y < height - 1) stack.push(p + width);
   }
 
-  return PNG.sync.write(png);
+  // Soften the jagged mask edge by fading pixels that neighbour transparency.
+  const softened = new Uint8Array(width * height);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const idx = (y * width + x) << 2;
+      if (data[idx + 3] === 0) continue;
+      let transparentNeighbours = 0;
+      let total = 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+          total++;
+          if (data[((ny * width + nx) << 2) + 3] === 0) transparentNeighbours++;
+        }
+      }
+      if (transparentNeighbours > 0 && total > 0) {
+        const frac = transparentNeighbours / total;
+        const alpha = Math.max(0, Math.min(255, Math.round(255 * (1 - frac * 0.6))));
+        softened[y * width + x] = alpha;
+      } else {
+        softened[y * width + x] = data[idx + 3];
+      }
+    }
+  }
+  for (let i = 0; i < width * height; i++) {
+    const a = softened[i];
+    if (a !== 0) data[(i << 2) + 3] = a;
+  }
 }
 
-function writePng(buffer: Buffer, out: string): void {
-  fs.mkdirSync(path.dirname(out), { recursive: true });
-  fs.writeFileSync(out, buffer);
+function loadPng(filePath: string): PNG {
+  const buf = fs.readFileSync(filePath);
+  return PNG.sync.read(buf);
+}
+
+function savePng(png: PNG, filePath: string): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, PNG.sync.write(png));
 }
 
 function buildIcns(masterPngPath: string, outIcnsPath: string): boolean {
-  // macOS only: build an iconset with required sizes and run iconutil.
   if (process.platform !== 'darwin') return false;
   const iconset = outIcnsPath.replace(/\.icns$/, '.iconset');
   fs.rmSync(iconset, { recursive: true, force: true });
@@ -161,7 +125,11 @@ function buildIcns(masterPngPath: string, outIcnsPath: string): boolean {
     { size: 1024, name: 'icon_512x512@2x.png' },
   ];
   for (const { size, name } of sizes) {
-    fs.writeFileSync(path.join(iconset, name), renderIcon(size));
+    const out = path.join(iconset, name);
+    execSync(
+      `/usr/bin/sips -z ${size} ${size} "${masterPngPath}" --out "${out}"`,
+      { stdio: 'ignore' },
+    );
   }
 
   try {
@@ -178,17 +146,25 @@ function buildIcns(masterPngPath: string, outIcnsPath: string): boolean {
 
 function main(): void {
   const assetsDir = path.join(PROJECT_ROOT, 'assets', 'icon');
+  const sourcePath = path.join(assetsDir, 'source.png');
   const pngPath = path.join(assetsDir, 'icon.png');
   const icnsPath = path.join(assetsDir, 'icon.icns');
 
-  console.log('[generate-icon] rendering 1024×1024 master PNG');
-  writePng(renderIcon(1024), pngPath);
+  if (!fs.existsSync(sourcePath)) {
+    console.error(`[generate-icon] missing ${path.relative(PROJECT_ROOT, sourcePath)}`);
+    process.exit(1);
+  }
+
+  console.log('[generate-icon] loading source PNG');
+  const png = loadPng(sourcePath);
+  console.log(`[generate-icon] ${png.width}×${png.height}, flooding corners to transparent`);
+  floodFillCornersTransparent(png);
+
+  savePng(png, pngPath);
   console.log(`[generate-icon] wrote ${path.relative(PROJECT_ROOT, pngPath)}`);
 
   if (buildIcns(pngPath, icnsPath)) {
-    console.log(
-      `[generate-icon] wrote ${path.relative(PROJECT_ROOT, icnsPath)}`,
-    );
+    console.log(`[generate-icon] wrote ${path.relative(PROJECT_ROOT, icnsPath)}`);
   } else {
     console.log('[generate-icon] skipped .icns (non-macOS or iconutil error)');
   }
