@@ -39,6 +39,8 @@
     "node_modules",
     "dist",
     "src/canvas-app/frontend",
+    "src/canvas-app/embedded-frontend.ts",
+    "src/canvas-app/canvas-bin.ts",
     "**/*.test.ts",
     "**/*.spec.ts",
     "**/*.js",
