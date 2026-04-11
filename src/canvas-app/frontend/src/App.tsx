@@ -10,6 +10,10 @@ import {
 import type { ExcalidrawElement, NonDeleted, NonDeletedExcalidrawElement } from '@excalidraw/excalidraw/types/element/types'
 import { convertMermaidToExcalidraw, DEFAULT_MERMAID_CONFIG } from './utils/mermaidConverter'
 import type { MermaidConfig } from '@excalidraw/mermaid-to-excalidraw'
+import { ClaudeSidebar } from './components/ClaudeSidebar'
+import { useClaudeBridge } from './hooks/useClaudeBridge'
+import { trackElementAuthor } from './utils/element-author'
+import './styles/claude-theme.css'
 
 // Type definitions
 type ExcalidrawAPIRefValue = ExcalidrawImperativeAPI;
@@ -273,6 +277,8 @@ function App(): JSX.Element {
   }, [excalidrawAPI])
   const [isConnected, setIsConnected] = useState<boolean>(false)
   const websocketRef = useRef<WebSocket | null>(null)
+  const [sidebarOpen, setSidebarOpen] = useState<boolean>(true)
+  const claudeBridge = useClaudeBridge(isConnected)
 
   // Sync state management
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle')
@@ -372,6 +378,10 @@ function App(): JSX.Element {
     websocketRef.current.onmessage = (event: MessageEvent) => {
       try {
         const data: WebSocketMessage = JSON.parse(event.data)
+        // Forward ExcaliClaude-specific messages to the Claude bridge.
+        // The bridge filters its types (claude_message, etc.) and ignores
+        // the rest, so we can safely pass every frame through it.
+        claudeBridge.handleWsMessage(data)
         handleWebSocketMessage(data)
       } catch (error) {
         console.error('Error parsing WebSocket message:', error, event.data)
@@ -832,50 +842,34 @@ function App(): JSX.Element {
     }
   }
 
+  const focusOnElements = (ids: string[]): void => {
+    if (!excalidrawAPI || ids.length === 0) return
+    const all = excalidrawAPI.getSceneElements()
+    const targets = all.filter((el) => ids.includes(el.id))
+    if (targets.length > 0) {
+      excalidrawAPI.scrollToContent(targets, { fitToViewport: true, animate: true })
+    }
+  }
+
   return (
-    <div className="app">
-      {/* Header */}
-      <div className="header">
-        <h1>Excalidraw Canvas</h1>
-        <div className="controls">
-          <div className="status">
-            <div className={`status-dot ${isConnected ? 'status-connected' : 'status-disconnected'}`}></div>
-            <span>{isConnected ? 'Connected' : 'Disconnected'}</span>
-          </div>
+    <div className="excaliclaude-root">
+      <div className="excaliclaude-canvas-wrap">
+        {/* Top-right toggle button — floats above the Excalidraw canvas */}
+        <button
+          className="claude-top-btn"
+          style={{ position: 'absolute', top: 12, right: 12, zIndex: 10 }}
+          onClick={() => {
+            setSidebarOpen((v) => !v)
+            claudeBridge.markAllRead()
+          }}
+          title={sidebarOpen ? 'Chiudi sidebar Claude' : 'Apri sidebar Claude'}
+        >
+          <span
+            className={`dot ${isConnected ? 'connected' : ''} ${claudeBridge.hasUnread ? 'has-unread' : ''}`}
+          />
+          {sidebarOpen ? 'Nascondi Claude' : 'Claude'}
+        </button>
 
-          {/* Sync Controls */}
-          <div className="sync-controls">
-            <button
-              className={`btn-primary ${syncStatus === 'syncing' ? 'btn-loading' : ''}`}
-              onClick={syncToBackend}
-              disabled={syncStatus === 'syncing' || !excalidrawAPI}
-            >
-              {syncStatus === 'syncing' && <span className="spinner"></span>}
-              {syncStatus === 'syncing' ? 'Syncing...' : 'Sync to Backend'}
-            </button>
-
-            {/* Sync Status */}
-            <div className="sync-status">
-              {syncStatus === 'success' && (
-                <span className="sync-success">✅ Synced</span>
-              )}
-              {syncStatus === 'error' && (
-                <span className="sync-error">❌ Sync Failed</span>
-              )}
-              {lastSyncTime && syncStatus === 'idle' && (
-                <span className="sync-time">
-                  Last sync: {formatSyncTime(lastSyncTime)}
-                </span>
-              )}
-            </div>
-          </div>
-
-          <button className="btn-secondary" onClick={clearCanvas}>Clear Canvas</button>
-        </div>
-      </div>
-
-      {/* Canvas Container */}
-      <div className="canvas-container">
         <div
           onPointerDownCapture={() => {
             userInteractedRef.current = true
@@ -887,7 +881,9 @@ function App(): JSX.Element {
         >
           <Excalidraw
             excalidrawAPI={(api: ExcalidrawAPIRefValue) => setExcalidrawAPI(api)}
-            onChange={() => {
+            onChange={(elements) => {
+              // Track elements created through UI as "human"
+              trackElementAuthor(elements as any)
               scheduleAutoSync()
             }}
             initialData={{
@@ -900,6 +896,17 @@ function App(): JSX.Element {
           />
         </div>
       </div>
+
+      {sidebarOpen && (
+        <ClaudeSidebar
+          session={claudeBridge.session}
+          connected={isConnected}
+          messages={claudeBridge.messages}
+          onSendSignal={(type, message) => claudeBridge.sendSignal(type, message)}
+          onClose={() => setSidebarOpen(false)}
+          onFocusElements={focusOnElements}
+        />
+      )}
     </div>
   )
 }

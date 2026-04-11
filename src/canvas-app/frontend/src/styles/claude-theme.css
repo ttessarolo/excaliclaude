@@ -1,0 +1,323 @@
+/* ExcaliClaude — Claude Sidebar theme
+   Si fonde con la UI di Excalidraw senza rumore visivo. */
+
+:root {
+  --claude-bg: #f8f6ff;
+  --claude-bg-hover: #f0edff;
+  --claude-accent: #7c5cfc;
+  --claude-accent-hover: #6a48e8;
+  --claude-accent-soft: #b8a9fc;
+  --claude-text: #1a1523;
+  --claude-text-muted: #6e6680;
+  --claude-border: #e8e4f0;
+  --claude-success: #34d399;
+  --claude-error: #ef4444;
+  --claude-annotation-bg: rgba(124, 92, 252, 0.08);
+}
+
+.excaliclaude-root {
+  display: flex;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+  font-family: 'Assistant', -apple-system, BlinkMacSystemFont, 'Segoe UI',
+    sans-serif;
+}
+
+.excaliclaude-canvas-wrap {
+  flex: 1;
+  position: relative;
+  min-width: 0;
+}
+
+/* ── Sidebar ─────────────────────────────────────────────── */
+.claude-sidebar {
+  width: 360px;
+  min-width: 280px;
+  max-width: 480px;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--claude-bg);
+  border-left: 1px solid var(--claude-border);
+  font-size: 14px;
+  color: var(--claude-text);
+  transition: width 0.2s ease, opacity 0.15s ease;
+}
+
+.claude-sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--claude-border);
+  background: white;
+}
+
+.claude-sidebar-header .session-info h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--claude-text);
+}
+
+.claude-sidebar-header .session-status {
+  font-size: 12px;
+  color: var(--claude-text-muted);
+  margin-top: 2px;
+  display: block;
+}
+
+.claude-sidebar-header .close-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  font-size: 20px;
+  cursor: pointer;
+  color: var(--claude-text-muted);
+}
+.claude-sidebar-header .close-btn:hover {
+  background: var(--claude-bg-hover);
+}
+
+/* ── Chat thread ─────────────────────────────────────────── */
+.chat-thread {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chat-thread::-webkit-scrollbar {
+  width: 6px;
+}
+.chat-thread::-webkit-scrollbar-thumb {
+  background: var(--claude-border);
+  border-radius: 3px;
+}
+
+.chat-empty {
+  text-align: center;
+  color: var(--claude-text-muted);
+  font-size: 12px;
+  padding: 32px 16px;
+}
+
+.chat-message {
+  display: flex;
+  gap: 8px;
+  max-width: 95%;
+  animation: fadeIn 0.15s ease;
+}
+
+.chat-message.human {
+  align-self: flex-end;
+  flex-direction: row-reverse;
+}
+
+.chat-message .message-content {
+  padding: 8px 12px;
+  border-radius: 12px;
+  line-height: 1.4;
+}
+
+.chat-message.claude .message-content {
+  background: white;
+  border: 1px solid var(--claude-border);
+  border-radius: 12px 12px 12px 4px;
+  color: var(--claude-text);
+}
+
+.chat-message.human .message-content {
+  background: var(--claude-accent);
+  color: white;
+  border-radius: 12px 12px 4px 12px;
+}
+
+.chat-message.system .message-content {
+  background: transparent;
+  color: var(--claude-text-muted);
+  font-size: 12px;
+  text-align: center;
+  width: 100%;
+  padding: 4px;
+}
+
+.chat-message .message-content p {
+  margin: 0;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.chat-message .message-time {
+  font-size: 10px;
+  color: var(--claude-text-muted);
+  align-self: flex-end;
+  flex-shrink: 0;
+  margin: 0 4px;
+}
+
+.chat-message .action-badge {
+  display: inline-block;
+  font-size: 10px;
+  background: var(--claude-bg-hover);
+  color: var(--claude-accent);
+  padding: 2px 6px;
+  border-radius: 4px;
+  margin-bottom: 4px;
+  font-weight: 600;
+}
+
+.message-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--claude-accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: white;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.focus-elements-btn {
+  display: inline-block;
+  background: none;
+  border: none;
+  color: var(--claude-accent);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 0;
+  margin-top: 4px;
+}
+.focus-elements-btn:hover {
+  text-decoration: underline;
+}
+
+/* ── Footer / input ──────────────────────────────────────── */
+.claude-sidebar-footer {
+  padding: 12px;
+  border-top: 1px solid var(--claude-border);
+  background: white;
+}
+
+.chat-input {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.chat-input input {
+  flex: 1;
+  padding: 8px 10px;
+  border: 1px solid var(--claude-border);
+  border-radius: 8px;
+  font-size: 13px;
+  outline: none;
+  color: var(--claude-text);
+}
+.chat-input input:focus {
+  border-color: var(--claude-accent);
+}
+
+.chat-input button {
+  padding: 8px 12px;
+  border: none;
+  background: var(--claude-accent);
+  color: white;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.signal-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.signal-btn {
+  flex: 1;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: none;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.signal-btn.primary {
+  background: var(--claude-accent);
+  color: white;
+}
+.signal-btn.primary:hover {
+  background: var(--claude-accent-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(124, 92, 252, 0.3);
+}
+
+.signal-btn.secondary {
+  background: var(--claude-bg-hover);
+  color: var(--claude-accent);
+  border: 1px solid var(--claude-border);
+}
+
+/* ── Top-right toggle button ─────────────────────────────── */
+.claude-top-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--claude-border);
+  background: white;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--claude-text);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+.claude-top-btn:hover {
+  background: var(--claude-bg-hover);
+}
+
+.claude-top-btn .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--claude-accent-soft);
+}
+.claude-top-btn .dot.connected {
+  background: var(--claude-success);
+}
+.claude-top-btn .dot.has-unread {
+  background: var(--claude-accent);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+/* ── Animations ──────────────────────────────────────────── */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
