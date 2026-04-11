@@ -6,7 +6,7 @@
   "plugins": [
     {
       "name": "excaliclaude",
-      "source": ".",
+      "source": "./",
       "description": "Interactive visual collaboration between human and Claude on a shared Excalidraw canvas. Draw together, discuss ideas visually, brainstorm on a whiteboard.",
       "version": "0.1.0",
       "author": {
