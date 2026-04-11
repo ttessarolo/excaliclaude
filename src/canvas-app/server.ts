@@ -1157,7 +1157,18 @@ app.get('/', (req: Request, res: Response) => {
   res.sendFile(htmlFile, (err) => {
     if (err) {
       logger.error('Error serving frontend:', err);
-      res.status(404).send('Frontend not found. Please run "npm run build" first.');
+      res
+        .status(503)
+        .type('html')
+        .send(
+          `<!doctype html><html><head><meta charset="utf-8"><title>ExcaliClaude — build in corso</title>` +
+            `<style>body{font-family:-apple-system,system-ui,sans-serif;padding:3rem;max-width:40rem;margin:auto;color:#222}code{background:#f3f3f3;padding:.15rem .4rem;border-radius:4px}</style></head>` +
+            `<body><h1>ExcaliClaude — frontend non ancora pronto</h1>` +
+            `<p>Il bundle del frontend non è stato trovato. Di solito viene generato automaticamente alla prima apertura del canvas.</p>` +
+            `<p>Se vedi questa pagina, prova a ricaricare tra qualche secondo oppure esegui manualmente dal root del plugin:</p>` +
+            `<pre><code>npm install\nnpm run build</code></pre>` +
+            `</body></html>`,
+        );
     }
   });
 });

@@ -50,6 +50,51 @@ export class SessionManager {
     }
   }
 
+  /** Risale l'albero da __dirname finché trova package.json (la project root). */
+  private findProjectRoot(): string {
+    let dir = __dirname;
+    for (let i = 0; i < 6; i++) {
+      if (fs.existsSync(path.join(dir, 'package.json'))) return dir;
+      const parent = path.dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+    return path.resolve(__dirname, '../..');
+  }
+
+  /**
+   * Assicura che il frontend sia buildato. Se `dist/frontend/index.html` manca,
+   * esegue `npm run build:frontend` al volo (prima esecuzione post-install).
+   * Throw con istruzioni chiare se il build fallisce.
+   */
+  private ensureFrontendBuilt(): void {
+    const projectRoot = this.findProjectRoot();
+    const indexPath = path.join(projectRoot, 'dist', 'frontend', 'index.html');
+    if (fs.existsSync(indexPath)) return;
+
+    logger.info(
+      `[SessionManager] Frontend non trovato in ${indexPath} — eseguo build:frontend (prima esecuzione, ~20-40s)...`,
+    );
+    try {
+      execSync('npm run build:frontend', {
+        cwd: projectRoot,
+        stdio: 'pipe',
+        env: { ...process.env, CI: '1' },
+      });
+    } catch (err) {
+      const stderr = (err as any)?.stderr?.toString?.() || '';
+      throw new Error(
+        `Build del frontend ExcaliClaude fallito. Esegui manualmente \`npm install && npm run build\` in ${projectRoot}.\n${stderr}`,
+      );
+    }
+    if (!fs.existsSync(indexPath)) {
+      throw new Error(
+        `Build del frontend completato ma ${indexPath} non esiste. Controlla la configurazione vite.`,
+      );
+    }
+    logger.info(`[SessionManager] Frontend buildato con successo.`);
+  }
+
   /** Attende che il canvas server risponda su una porta */
   private async waitForReady(port: number, timeoutMs: number): Promise<void> {
     const start = Date.now();
@@ -68,6 +113,8 @@ export class SessionManager {
 
   /** Crea una nuova sessione canvas: spawna server + finestra */
   async createSession(options: CreateSessionOptions): Promise<CanvasSession> {
+    this.ensureFrontendBuilt();
+
     const id = (webcrypto as any).randomUUID();
     const port = this.nextPort++;
     const url = `http://localhost:${port}`;
