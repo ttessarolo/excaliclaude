@@ -3,6 +3,7 @@ import cors from 'cors';
 import { WebSocketServer } from 'ws';
 import { createServer } from 'http';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import logger from '../mcp/utils/logger.js';
@@ -34,6 +35,21 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+function findProjectRoot(): string {
+  let dir = __dirname;
+  for (let i = 0; i < 6; i++) {
+    if (fs.existsSync(path.join(dir, 'package.json'))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return path.resolve(__dirname, '../..');
+}
+
+const PROJECT_ROOT = findProjectRoot();
+const FRONTEND_DIR = path.join(PROJECT_ROOT, 'dist', 'frontend');
+const FONTS_DIR = path.join(PROJECT_ROOT, 'node_modules', '@excalidraw', 'excalidraw', 'dist', 'prod', 'fonts');
+
 const app = express();
 const server = createServer(app);
 const wss = new WebSocketServer({ server });
@@ -42,15 +58,8 @@ const wss = new WebSocketServer({ server });
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
-// Serve static files from the build directory
-const staticDir = path.join(__dirname, '../dist');
-app.use(express.static(staticDir));
-// Also serve frontend assets
-app.use(express.static(path.join(__dirname, '../dist/frontend')));
-// Serve Excalidraw fonts so the font subsetting worker can fetch them for export
-app.use('/assets/fonts', express.static(
-  path.join(__dirname, '../node_modules/@excalidraw/excalidraw/dist/prod/fonts')
-));
+app.use(express.static(FRONTEND_DIR));
+app.use('/assets/fonts', express.static(FONTS_DIR));
 
 // WebSocket connections
 const clients = new Set<WebSocket>();
@@ -1153,7 +1162,7 @@ app.get('/api/snapshots/:name', (req: Request, res: Response) => {
 
 // Serve the frontend
 app.get('/', (req: Request, res: Response) => {
-  const htmlFile = path.join(__dirname, '../dist/frontend/index.html');
+  const htmlFile = path.join(FRONTEND_DIR, 'index.html');
   res.sendFile(htmlFile, (err) => {
     if (err) {
       logger.error('Error serving frontend:', err);
