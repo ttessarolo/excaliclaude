@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "excaliclaude": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/dist/mcp/index.js"],
+      "env": {
+        "CANVAS_APP_PATH": "${CLAUDE_PLUGIN_ROOT}/dist/canvas-app/start-server.js",
+        "EXCALICLAUDE_SESSIONS_DIR": "${CLAUDE_PLUGIN_ROOT}/.sessions"
+      }
+    }
+  }
+}

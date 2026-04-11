@@ -1,0 +1,18 @@
+{
+  "name": "excaliclaude",
+  "version": "0.1.0",
+  "description": "Interactive visual collaboration between human and Claude on a shared Excalidraw canvas. Draw together, discuss ideas visually, brainstorm on a whiteboard.",
+  "author": {
+    "name": "ttessarolo"
+  },
+  "keywords": [
+    "excalidraw",
+    "canvas",
+    "visual-collaboration",
+    "diagram",
+    "architecture",
+    "brainstorm",
+    "whiteboard",
+    "drawing"
+  ]
+}
