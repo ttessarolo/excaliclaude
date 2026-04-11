@@ -282,23 +282,23 @@ function App(): JSX.Element {
   const websocketRef = useRef<WebSocket | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(true)
   const [isDark, setIsDark] = useState<boolean>(() => {
-    if (typeof window === 'undefined' || !window.matchMedia) return false
+    if (typeof window === 'undefined') return false
+    // URL query param has priority — set by canvas-bin from OS AppleInterfaceStyle
+    // so the value is correct on the *very first* render, before matchMedia may
+    // have stabilized inside the webview.
+    try {
+      const qp = new URLSearchParams(window.location.search).get('theme')
+      if (qp === 'dark') return true
+      if (qp === 'light') return false
+    } catch {}
+    if (!window.matchMedia) return false
     return window.matchMedia('(prefers-color-scheme: dark)').matches
   })
-  // Gate for ignoring Excalidraw's initial theme emission (which reflects
-  // its own localStorage restoration, not a user toggle). Flipped to true
-  // after we seed the canvas with the OS-derived value.
-  const themeSeededRef = useRef<boolean>(false)
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return
     const mq = window.matchMedia('(prefers-color-scheme: dark)')
     const onChange = (e: MediaQueryListEvent): void => {
       setIsDark(e.matches)
-      if (excalidrawAPI) {
-        applySceneUpdateWithoutAutoSync(excalidrawAPI, {
-          appState: { theme: (e.matches ? 'dark' : 'light') as any }
-        })
-      }
     }
     if (typeof mq.addEventListener === 'function') {
       mq.addEventListener('change', onChange)
@@ -306,7 +306,7 @@ function App(): JSX.Element {
     }
     mq.addListener(onChange)
     return () => mq.removeListener(onChange)
-  }, [excalidrawAPI])
+  }, [])
   const [quitModalOpen, setQuitModalOpen] = useState<boolean>(false)
   const [quitSaving, setQuitSaving] = useState<boolean>(false)
   const claudeBridge = useClaudeBridge(isConnected)
@@ -356,12 +356,6 @@ function App(): JSX.Element {
   // Load existing elements when Excalidraw API becomes available
   useEffect(() => {
     if (excalidrawAPI) {
-      // Seed Excalidraw with the current (OS-derived) theme to override
-      // whatever value it may have restored from localStorage.
-      applySceneUpdateWithoutAutoSync(excalidrawAPI, {
-        appState: { theme: (isDark ? 'dark' : 'light') as any }
-      })
-      themeSeededRef.current = true
       loadExistingElements()
 
       // Ensure WebSocket is connected for real-time updates
@@ -995,26 +989,19 @@ function App(): JSX.Element {
               setExcalidrawAPI(api)
               registerExcalidrawAPIForClipboard(api as any)
             }}
+            theme={isDark ? 'dark' : 'light'}
             UIOptions={{ canvasActions: { toggleTheme: true } }}
             onChange={(elements, appState) => {
               // Track elements created through UI as "human"
               trackElementAuthor(elements as any)
               scheduleAutoSync()
-              if (
-                themeSeededRef.current &&
-                appState &&
-                typeof (appState as any).theme === 'string'
-              ) {
+              if (appState && typeof (appState as any).theme === 'string') {
                 const nextDark = (appState as any).theme === 'dark'
                 if (nextDark !== isDark) setIsDark(nextDark)
               }
             }}
             initialData={{
-              elements: [],
-              appState: {
-                theme: isDark ? 'dark' : 'light',
-                viewBackgroundColor: isDark ? '#121212' : '#ffffff'
-              }
+              elements: []
             }}
           />
         </div>

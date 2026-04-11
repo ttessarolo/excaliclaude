@@ -54,6 +54,20 @@ function getMacMainScreenSize(): { width: number; height: number } | null {
   return null;
 }
 
+function getMacIsDarkMode(): boolean {
+  if (process.platform !== 'darwin') return false;
+  try {
+    const out = execFileSync('/usr/bin/defaults', ['read', '-g', 'AppleInterfaceStyle'], {
+      encoding: 'utf8',
+      timeout: 500,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    return out.trim() === 'Dark';
+  } catch {
+    return false;
+  }
+}
+
 const FALLBACK_WINDOW_WIDTH = 1280;
 const FALLBACK_WINDOW_HEIGHT = 800;
 
@@ -77,7 +91,19 @@ const WINDOW_HEIGHT = parseInt(
 );
 const HEADLESS = process.env.HEADLESS === '1' || process.argv.includes('--headless');
 const WEBVIEW_ONLY = process.argv.includes('--webview-only');
-const WEBVIEW_URL = parseArg('--url', `http://${HOST}:${PORT}`);
+const INITIAL_DARK = getMacIsDarkMode();
+const WEBVIEW_URL = (() => {
+  const base = parseArg('--url', `http://${HOST}:${PORT}`);
+  try {
+    const u = new URL(base);
+    if (!u.searchParams.has('theme')) {
+      u.searchParams.set('theme', INITIAL_DARK ? 'dark' : 'light');
+    }
+    return u.toString();
+  } catch {
+    return base;
+  }
+})();
 const LOAD_SCENE_PATH = process.env.EXCALICLAUDE_LOAD || parseArg('--load', '') || '';
 
 // ---- Debug logger (file-based so parent + child + MCP can tail the same log)
