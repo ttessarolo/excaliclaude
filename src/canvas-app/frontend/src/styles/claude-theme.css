@@ -1,18 +1,39 @@
 /* ExcaliClaude — Claude Sidebar theme
-   Si fonde con la UI di Excalidraw senza rumore visivo. */
+   Blends with the Excalidraw UI without visual noise.
+   Accent: HSL(15, 63%, 60%) — warm terracotta. */
 
 :root {
-  --claude-bg: #f8f6ff;
-  --claude-bg-hover: #f0edff;
-  --claude-accent: #7c5cfc;
-  --claude-accent-hover: #6a48e8;
-  --claude-accent-soft: #b8a9fc;
+  --claude-bg: #fdf8f6;
+  --claude-bg-hover: #f9ede7;
+  --claude-accent: #d97959;
+  --claude-accent-hover: #c4613f;
+  --claude-accent-soft: #f2d3c5;
   --claude-text: #1a1523;
   --claude-text-muted: #6e6680;
-  --claude-border: #e8e4f0;
+  --claude-border: #ecddd3;
+  --claude-surface: #ffffff;
   --claude-success: #34d399;
   --claude-error: #ef4444;
-  --claude-annotation-bg: rgba(124, 92, 252, 0.08);
+  --claude-annotation-bg: rgba(217, 121, 89, 0.08);
+  --claude-shadow: rgba(0, 0, 0, 0.05);
+  --claude-accent-shadow: rgba(217, 121, 89, 0.3);
+}
+
+[data-theme='dark'] {
+  --claude-bg: #1e1e1e;
+  --claude-bg-hover: #2a2a2a;
+  --claude-accent: #e38867;
+  --claude-accent-hover: #f2a183;
+  --claude-accent-soft: rgba(227, 136, 103, 0.22);
+  --claude-text: #e5e5e5;
+  --claude-text-muted: #9a9a9a;
+  --claude-border: #3a3a3a;
+  --claude-surface: #232323;
+  --claude-success: #34d399;
+  --claude-error: #f87171;
+  --claude-annotation-bg: rgba(227, 136, 103, 0.15);
+  --claude-shadow: rgba(0, 0, 0, 0.4);
+  --claude-accent-shadow: rgba(227, 136, 103, 0.35);
 }
 
 .excaliclaude-root {
@@ -22,6 +43,8 @@
   overflow: hidden;
   font-family: 'Assistant', -apple-system, BlinkMacSystemFont, 'Segoe UI',
     sans-serif;
+  background: var(--claude-surface);
+  color: var(--claude-text);
 }
 
 .excaliclaude-canvas-wrap {
@@ -42,7 +65,15 @@
   border-left: 1px solid var(--claude-border);
   font-size: 14px;
   color: var(--claude-text);
-  transition: width 0.2s ease, opacity 0.15s ease;
+  transition: transform 0.25s ease, width 0.2s ease, opacity 0.15s ease;
+}
+
+.claude-sidebar.collapsed {
+  width: 0;
+  min-width: 0;
+  overflow: hidden;
+  opacity: 0;
+  border-left: none;
 }
 
 .claude-sidebar-header {
@@ -51,7 +82,13 @@
   justify-content: space-between;
   padding: 12px 16px;
   border-bottom: 1px solid var(--claude-border);
-  background: white;
+  background: var(--claude-surface);
+  gap: 8px;
+}
+
+.claude-sidebar-header .session-info {
+  flex: 1;
+  min-width: 0;
 }
 
 .claude-sidebar-header .session-info h3 {
@@ -59,6 +96,9 @@
   font-size: 15px;
   font-weight: 600;
   color: var(--claude-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .claude-sidebar-header .session-status {
@@ -68,18 +108,75 @@
   display: block;
 }
 
-.claude-sidebar-header .close-btn {
+.claude-sidebar-header .header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.claude-sidebar-header .icon-btn {
   width: 28px;
   height: 28px;
   border: none;
   background: transparent;
   border-radius: 6px;
-  font-size: 20px;
+  font-size: 16px;
   cursor: pointer;
   color: var(--claude-text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
-.claude-sidebar-header .close-btn:hover {
+.claude-sidebar-header .icon-btn:hover {
   background: var(--claude-bg-hover);
+  color: var(--claude-text);
+}
+
+/* ── Chevron toggle handle (edge of sidebar) ─────────────── */
+.claude-toggle-handle {
+  position: fixed;
+  top: 50%;
+  right: 360px;
+  transform: translateY(-50%);
+  width: 18px;
+  height: 52px;
+  background: var(--claude-surface);
+  border: 1px solid var(--claude-border);
+  border-right: none;
+  border-radius: 8px 0 0 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  color: var(--claude-text-muted);
+  font-size: 13px;
+  transition: right 0.25s ease, background 0.15s ease, color 0.15s ease;
+  box-shadow: -2px 0 6px var(--claude-shadow);
+  padding: 0;
+}
+
+.claude-toggle-handle:hover {
+  background: var(--claude-bg-hover);
+  color: var(--claude-accent);
+}
+
+.claude-toggle-handle.collapsed {
+  right: 0;
+}
+
+.claude-toggle-handle .dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: transparent;
+}
+.claude-toggle-handle .dot.has-unread {
+  background: var(--claude-accent);
+  animation: pulse 1.5s ease-in-out infinite;
 }
 
 /* ── Chat thread ─────────────────────────────────────────── */
@@ -126,7 +223,7 @@
 }
 
 .chat-message.claude .message-content {
-  background: white;
+  background: var(--claude-surface);
   border: 1px solid var(--claude-border);
   border-radius: 12px 12px 12px 4px;
   color: var(--claude-text);
@@ -164,12 +261,16 @@
 .chat-message .action-badge {
   display: inline-block;
   font-size: 10px;
-  background: var(--claude-bg-hover);
+  background: var(--claude-accent-soft);
   color: var(--claude-accent);
   padding: 2px 6px;
   border-radius: 4px;
   margin-bottom: 4px;
   font-weight: 600;
+}
+
+[data-theme='dark'] .chat-message .action-badge {
+  color: #ffb89c;
 }
 
 .message-avatar {
@@ -204,7 +305,7 @@
 .claude-sidebar-footer {
   padding: 12px;
   border-top: 1px solid var(--claude-border);
-  background: white;
+  background: var(--claude-surface);
 }
 
 .chat-input {
@@ -221,6 +322,7 @@
   font-size: 13px;
   outline: none;
   color: var(--claude-text);
+  background: var(--claude-surface);
 }
 .chat-input input:focus {
   border-color: var(--claude-accent);
@@ -260,7 +362,7 @@
 .signal-btn.primary:hover {
   background: var(--claude-accent-hover);
   transform: translateY(-1px);
-  box-shadow: 0 2px 8px rgba(124, 92, 252, 0.3);
+  box-shadow: 0 2px 8px var(--claude-accent-shadow);
 }
 
 .signal-btn.secondary {
@@ -268,37 +370,88 @@
   color: var(--claude-accent);
   border: 1px solid var(--claude-border);
 }
+[data-theme='dark'] .signal-btn.secondary {
+  color: #ffb89c;
+}
 
-/* ── Top-right toggle button ─────────────────────────────── */
-.claude-top-btn {
+/* ── Quit modal ──────────────────────────────────────────── */
+.excaliclaude-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  border: 1px solid var(--claude-border);
-  background: white;
-  border-radius: 8px;
-  font-size: 13px;
-  cursor: pointer;
-  color: var(--claude-text);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
-}
-.claude-top-btn:hover {
-  background: var(--claude-bg-hover);
+  justify-content: center;
+  z-index: 1000;
+  animation: fadeIn 0.15s ease;
 }
 
-.claude-top-btn .dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--claude-accent-soft);
+.excaliclaude-modal {
+  background: var(--claude-surface);
+  color: var(--claude-text);
+  border: 1px solid var(--claude-border);
+  border-radius: 14px;
+  padding: 24px 26px;
+  max-width: 420px;
+  width: calc(100% - 40px);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  font-family: inherit;
 }
-.claude-top-btn .dot.connected {
-  background: var(--claude-success);
+
+.excaliclaude-modal h2 {
+  margin: 0 0 6px;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--claude-text);
 }
-.claude-top-btn .dot.has-unread {
+
+.excaliclaude-modal p {
+  margin: 0 0 20px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--claude-text-muted);
+}
+
+.excaliclaude-modal-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.excaliclaude-modal-btn {
+  padding: 9px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--claude-border);
+  background: var(--claude-bg-hover);
+  color: var(--claude-text);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.excaliclaude-modal-btn:hover {
+  background: var(--claude-border);
+}
+
+.excaliclaude-modal-btn.primary {
   background: var(--claude-accent);
-  animation: pulse 1.5s ease-in-out infinite;
+  color: white;
+  border-color: var(--claude-accent);
+}
+.excaliclaude-modal-btn.primary:hover {
+  background: var(--claude-accent-hover);
+  border-color: var(--claude-accent-hover);
+}
+
+.excaliclaude-modal-btn.danger {
+  background: transparent;
+  color: var(--claude-error);
+  border-color: var(--claude-border);
+}
+.excaliclaude-modal-btn.danger:hover {
+  background: rgba(239, 68, 68, 0.08);
+  border-color: var(--claude-error);
 }
 
 /* ── Animations ──────────────────────────────────────────── */
@@ -319,5 +472,47 @@
   }
   50% {
     opacity: 0.5;
+  }
+}
+
+/* Claude thinking indicator (Feature 1) */
+.claude-thinking {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 6px 10px;
+  background: linear-gradient(90deg, rgba(124, 92, 252, 0.08), rgba(124, 92, 252, 0.02));
+  border: 1px solid rgba(124, 92, 252, 0.25);
+  border-radius: 8px;
+  font-size: 12px;
+  color: #4c3a9e;
+  animation: pulse 2.4s ease-in-out infinite;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.claude-thinking-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(124, 92, 252, 0.2);
+  border-top-color: #7c5cfc;
+  border-radius: 50%;
+  animation: claude-spin 0.9s linear infinite;
+  flex-shrink: 0;
+}
+
+.claude-thinking-label {
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.01em;
+}
+
+@keyframes claude-spin {
+  to {
+    transform: rotate(360deg);
   }
 }

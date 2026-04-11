@@ -866,12 +866,29 @@ function convertTextToLabel(element: ServerElement): ServerElement {
   return element;
 }
 
+// Fire-and-forget: notify the canvas sidebar that Claude started/ended a tool.
+// Silently swallows errors — status UI is a nice-to-have, never block a tool.
+function pingToolActivity(tool: string, phase: 'start' | 'end', args?: any): void {
+  try {
+    const baseUrl = String(EXPRESS_SERVER_URL);
+    if (!baseUrl || baseUrl === 'undefined') return;
+    void fetch(`${baseUrl}/api/claude/tool-activity`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tool, phase, args }),
+      signal: AbortSignal.timeout(1500),
+    }).catch(() => {});
+  } catch {
+    // ignore
+  }
+}
+
 // Set up request handler for tool calls
 server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest) => {
+  const { name, arguments: args } = request.params;
+  logger.info(`Handling tool call: ${name}`);
+  pingToolActivity(name, 'start', args);
   try {
-    const { name, arguments: args } = request.params;
-    logger.info(`Handling tool call: ${name}`);
-    
     switch (name) {
       case 'create_element': {
         const params = ElementSchema.parse(args);
@@ -2238,6 +2255,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
       content: [{ type: 'text', text: `Error: ${(error as Error).message}` }],
       isError: true
     };
+  } finally {
+    pingToolActivity(name, 'end');
   }
 });
 

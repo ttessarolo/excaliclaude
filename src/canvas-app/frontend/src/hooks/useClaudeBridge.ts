@@ -14,18 +14,39 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ChatMessage } from '../components/ChatThread';
 import type { SessionInfo } from '../components/ClaudeSidebar';
 
+export interface ClaudeStatus {
+  busy: boolean;
+  tool: string | null;
+  label: string | null;
+}
+
+export interface SignalExtras {
+  sceneUnchangedSinceLastTurn?: boolean;
+  sessionMemory?: string;
+}
+
 export interface ClaudeBridge {
   session: SessionInfo;
   messages: ChatMessage[];
   hasUnread: boolean;
+  claudeStatus: ClaudeStatus;
   markAllRead: () => void;
-  sendSignal: (type: 'look' | 'message' | 'approve', message?: string) => Promise<void>;
+  sendSignal: (
+    type: 'look' | 'message' | 'approve',
+    message?: string,
+    extras?: SignalExtras,
+  ) => Promise<void>;
   handleWsMessage: (data: any) => void;
 }
 
 export function useClaudeBridge(connected: boolean): ClaudeBridge {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [hasUnread, setHasUnread] = useState(false);
+  const [claudeStatus, setClaudeStatus] = useState<ClaudeStatus>({
+    busy: false,
+    tool: null,
+    label: null,
+  });
 
   // Session info is injected by the canvas server via env at boot time.
   // The frontend reads it from a well-known meta tag / global (fallback to
@@ -62,6 +83,12 @@ export function useClaudeBridge(connected: boolean): ClaudeBridge {
     if (data.type === 'claude_message' && data.message) {
       setMessages((prev) => [...prev, data.message]);
       setHasUnread(true);
+    } else if (data.type === 'claude_status') {
+      setClaudeStatus({
+        busy: !!data.busy,
+        tool: data.tool ?? null,
+        label: data.label ?? null,
+      });
     }
   }, []);
 
@@ -71,6 +98,7 @@ export function useClaudeBridge(connected: boolean): ClaudeBridge {
     async (
       type: 'look' | 'message' | 'approve',
       message?: string,
+      extras?: SignalExtras,
     ): Promise<void> => {
       // Optimistic: add the human message to the thread
       if (type === 'message' && message) {
@@ -87,7 +115,7 @@ export function useClaudeBridge(connected: boolean): ClaudeBridge {
           id: `local-${Date.now()}`,
           sender: 'system',
           type: 'system',
-          content: '👀 Richiesto feedback a Claude',
+          content: '👀 Requested Claude feedback',
           timestamp: new Date().toISOString(),
         };
         setMessages((prev) => [...prev, localMsg]);
@@ -96,11 +124,14 @@ export function useClaudeBridge(connected: boolean): ClaudeBridge {
           id: `local-${Date.now()}`,
           sender: 'system',
           type: 'system',
-          content: '✅ Approvato',
+          content: '✅ Approved',
           timestamp: new Date().toISOString(),
         };
         setMessages((prev) => [...prev, localMsg]);
       }
+
+      // Optimistic thinking indicator — the server will confirm via WS.
+      setClaudeStatus({ busy: true, tool: null, label: 'Thinking...' });
 
       try {
         await fetch('/api/claude/signal', {
@@ -110,6 +141,8 @@ export function useClaudeBridge(connected: boolean): ClaudeBridge {
             signal_type: type,
             message,
             timestamp: new Date().toISOString(),
+            sceneUnchangedSinceLastTurn: extras?.sceneUnchangedSinceLastTurn,
+            sessionMemory: extras?.sessionMemory,
           }),
         });
       } catch (err) {
@@ -126,6 +159,7 @@ export function useClaudeBridge(connected: boolean): ClaudeBridge {
     session,
     messages,
     hasUnread,
+    claudeStatus,
     markAllRead,
     sendSignal,
     handleWsMessage,

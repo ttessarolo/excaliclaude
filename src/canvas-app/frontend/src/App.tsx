@@ -11,7 +11,9 @@ import type { ExcalidrawElement, NonDeleted, NonDeletedExcalidrawElement } from 
 import { convertMermaidToExcalidraw, DEFAULT_MERMAID_CONFIG } from './utils/mermaidConverter'
 import type { MermaidConfig } from '@excalidraw/mermaid-to-excalidraw'
 import { ClaudeSidebar } from './components/ClaudeSidebar'
+import { QuitModal } from './components/QuitModal'
 import { useClaudeBridge } from './hooks/useClaudeBridge'
+import { hashScene } from './lib/sceneHash'
 import { trackElementAuthor } from './utils/element-author'
 import './styles/claude-theme.css'
 
@@ -278,7 +280,15 @@ function App(): JSX.Element {
   const [isConnected, setIsConnected] = useState<boolean>(false)
   const websocketRef = useRef<WebSocket | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(true)
+  const [isDark, setIsDark] = useState<boolean>(false)
+  const [quitModalOpen, setQuitModalOpen] = useState<boolean>(false)
+  const [quitSaving, setQuitSaving] = useState<boolean>(false)
   const claudeBridge = useClaudeBridge(isConnected)
+
+  // Scene diff detection (Feature 2): hash of the scene at the moment of
+  // the last signal sent to Claude. If unchanged, we tell Claude to reuse
+  // the previous description instead of calling describe_scene again.
+  const lastSignalSceneHashRef = useRef<string | null>(null)
 
   // Sync state management
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle')
@@ -320,6 +330,13 @@ function App(): JSX.Element {
   // Load existing elements when Excalidraw API becomes available
   useEffect(() => {
     if (excalidrawAPI) {
+      // Force the theme to 'light' at mount to override any value Excalidraw
+      // may have restored from localStorage (theme is persisted to browser
+      // storage by default). This keeps the initial appearance deterministic
+      // regardless of prior sessions or system preference.
+      applySceneUpdateWithoutAutoSync(excalidrawAPI, {
+        appState: { theme: 'light' as any }
+      })
       loadExistingElements()
 
       // Ensure WebSocket is connected for real-time updates
@@ -851,25 +868,94 @@ function App(): JSX.Element {
     }
   }
 
-  return (
-    <div className="excaliclaude-root">
-      <div className="excaliclaude-canvas-wrap">
-        {/* Top-right toggle button — floats above the Excalidraw canvas */}
-        <button
-          className="claude-top-btn"
-          style={{ position: 'absolute', top: 12, right: 12, zIndex: 10 }}
-          onClick={() => {
-            setSidebarOpen((v) => !v)
-            claudeBridge.markAllRead()
-          }}
-          title={sidebarOpen ? 'Chiudi sidebar Claude' : 'Apri sidebar Claude'}
-        >
-          <span
-            className={`dot ${isConnected ? 'connected' : ''} ${claudeBridge.hasUnread ? 'has-unread' : ''}`}
-          />
-          {sidebarOpen ? 'Nascondi Claude' : 'Claude'}
-        </button>
+  const openQuitModal = (): void => setQuitModalOpen(true)
+  const cancelQuit = (): void => setQuitModalOpen(false)
 
+  // Feature 2: wrap sendSignal so we can tell Claude when the scene hasn't
+  // changed since the last turn — saves tokens by skipping describe_scene.
+  const sendSignalWithDiff = async (
+    type: 'look' | 'message' | 'approve',
+    message?: string,
+  ): Promise<void> => {
+    let sceneUnchanged = false
+    try {
+      const api = excalidrawAPIRef.current
+      if (api) {
+        const elements = api.getSceneElements() as readonly NonDeletedExcalidrawElement[]
+        const hash = await hashScene(elements)
+        if (
+          lastSignalSceneHashRef.current !== null &&
+          lastSignalSceneHashRef.current === hash
+        ) {
+          sceneUnchanged = true
+        }
+        lastSignalSceneHashRef.current = hash
+      }
+    } catch (err) {
+      console.warn('[ExcaliClaude] scene hash failed', err)
+    }
+    await claudeBridge.sendSignal(
+      type,
+      message,
+      sceneUnchanged ? { sceneUnchangedSinceLastTurn: true } : undefined,
+    )
+  }
+
+  const saveCurrentScene = async (): Promise<string | null> => {
+    try {
+      const res = await fetch('/api/claude/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: claudeBridge.session.title }),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const data = await res.json()
+      return data?.path || null
+    } catch (err) {
+      console.error('[ExcaliClaude] save failed', err)
+      return null
+    }
+  }
+
+  const shutdownServer = (): void => {
+    // Fire-and-forget: backend will terminate the webview child, which ends
+    // webview.run() in the native window and exits the process.
+    fetch('/api/claude/quit', { method: 'POST' }).catch(() => {})
+  }
+
+  const confirmSaveAndQuit = async (): Promise<void> => {
+    setQuitSaving(true)
+    await saveCurrentScene()
+    setQuitSaving(false)
+    setQuitModalOpen(false)
+    shutdownServer()
+  }
+
+  const confirmDiscardAndQuit = (): void => {
+    setQuitModalOpen(false)
+    shutdownServer()
+  }
+
+  // Best-effort: browser-level beforeunload intercept. In webview-bun this
+  // may not reliably fire for native close, but it covers Cmd+R / in-app
+  // navigation cases.
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent): string | undefined => {
+      if (!quitModalOpen) {
+        setQuitModalOpen(true)
+        e.preventDefault()
+        e.returnValue = ''
+        return ''
+      }
+      return undefined
+    }
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+  }, [quitModalOpen])
+
+  return (
+    <div className="excaliclaude-root" data-theme={isDark ? 'dark' : 'light'}>
+      <div className="excaliclaude-canvas-wrap">
         <div
           onPointerDownCapture={() => {
             userInteractedRef.current = true
@@ -881,32 +967,61 @@ function App(): JSX.Element {
         >
           <Excalidraw
             excalidrawAPI={(api: ExcalidrawAPIRefValue) => setExcalidrawAPI(api)}
-            onChange={(elements) => {
+            UIOptions={{ canvasActions: { toggleTheme: true } }}
+            onChange={(elements, appState) => {
               // Track elements created through UI as "human"
               trackElementAuthor(elements as any)
               scheduleAutoSync()
+              if (appState && typeof (appState as any).theme === 'string') {
+                const nextDark = (appState as any).theme === 'dark'
+                if (nextDark !== isDark) setIsDark(nextDark)
+              }
             }}
             initialData={{
               elements: [],
               appState: {
-                theme: 'light',
-                viewBackgroundColor: '#ffffff'
+                theme: isDark ? 'dark' : 'light',
+                viewBackgroundColor: isDark ? '#121212' : '#ffffff'
               }
             }}
           />
         </div>
       </div>
 
-      {sidebarOpen && (
-        <ClaudeSidebar
-          session={claudeBridge.session}
-          connected={isConnected}
-          messages={claudeBridge.messages}
-          onSendSignal={(type, message) => claudeBridge.sendSignal(type, message)}
-          onClose={() => setSidebarOpen(false)}
-          onFocusElements={focusOnElements}
+      <ClaudeSidebar
+        session={claudeBridge.session}
+        connected={isConnected}
+        messages={claudeBridge.messages}
+        claudeStatus={claudeBridge.claudeStatus}
+        collapsed={!sidebarOpen}
+        onSendSignal={(type, message) => sendSignalWithDiff(type, message)}
+        onQuit={openQuitModal}
+        onFocusElements={focusOnElements}
+      />
+
+      <button
+        type="button"
+        className={`claude-toggle-handle${sidebarOpen ? '' : ' collapsed'}`}
+        onClick={() => {
+          setSidebarOpen((v) => !v)
+          if (!sidebarOpen) claudeBridge.markAllRead()
+        }}
+        aria-label={sidebarOpen ? 'Collapse Claude sidebar' : 'Expand Claude sidebar'}
+        title={sidebarOpen ? 'Collapse Claude sidebar' : 'Expand Claude sidebar'}
+      >
+        {sidebarOpen ? '›' : '‹'}
+        <span
+          className={`dot${claudeBridge.hasUnread && !sidebarOpen ? ' has-unread' : ''}`}
         />
-      )}
+      </button>
+
+      <QuitModal
+        open={quitModalOpen}
+        saving={quitSaving}
+        onSave={confirmSaveAndQuit}
+        onDiscard={confirmDiscardAndQuit}
+        onCancel={cancelQuit}
+      />
     </div>
   )
 }

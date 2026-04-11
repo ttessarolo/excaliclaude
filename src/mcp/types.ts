@@ -186,7 +186,8 @@ export type WebSocketMessageType =
   | 'export_image_request'
   | 'set_viewport'
   | 'files_added'
-  | 'file_deleted';
+  | 'file_deleted'
+  | 'claude_status';
 
 export interface InitialElementsMessage extends WebSocketMessage {
   type: 'initial_elements';

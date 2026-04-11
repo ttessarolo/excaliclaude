@@ -33,6 +33,7 @@ const WINDOW_HEIGHT = parseInt(process.env.WINDOW_HEIGHT || parseArg('--height',
 const HEADLESS = process.env.HEADLESS === '1' || process.argv.includes('--headless');
 const WEBVIEW_ONLY = process.argv.includes('--webview-only');
 const WEBVIEW_URL = parseArg('--url', `http://${HOST}:${PORT}`);
+const LOAD_SCENE_PATH = process.env.EXCALICLAUDE_LOAD || parseArg('--load', '') || '';
 
 // ---- Debug logger (file-based so parent + child + MCP can tail the same log)
 const LOG_PATH =
@@ -153,12 +154,34 @@ async function runServer(): Promise<void> {
   dlog('server', `execPath: ${process.execPath}`);
   dlog('server', `log file: ${LOG_PATH}`);
 
+  // Shared handle for the webview child, wired below after spawn. The
+  // /api/claude/quit endpoint closes it first so the native window
+  // disappears, then kills the HTTP server and exits the process.
+  const quitState: { child: ReturnType<typeof spawn> | null; server: any } = {
+    child: null,
+    server: null,
+  };
+
   const { server } = createCanvasApp({
     sessionId: SESSION_ID,
     title: SESSION_TITLE,
+    loadScenePath: LOAD_SCENE_PATH ? path.resolve(LOAD_SCENE_PATH) : undefined,
     rootHandler: (req, res, next) => void serveEmbedded(req, res, next),
     staticHandler: (req, res, next) => void serveEmbedded(req, res, next),
+    onQuit: () => {
+      dlog('server', 'onQuit invoked — killing webview child and exiting');
+      try {
+        quitState.child?.kill('SIGTERM');
+      } catch (err) {
+        dlog('server', `onQuit kill failed: ${err}`);
+      }
+      try {
+        quitState.server?.close();
+      } catch {}
+      setTimeout(() => process.exit(0), 250);
+    },
   });
+  quitState.server = server;
 
   await new Promise<void>((resolve, reject) => {
     server.once('error', (err) => {
@@ -208,6 +231,7 @@ async function runServer(): Promise<void> {
       stdio: ['ignore', 'pipe', 'pipe'],
     },
   );
+  quitState.child = child;
 
   child.stdout?.on('data', (d) => dlog('child:out', String(d).trimEnd()));
   child.stderr?.on('data', (d) => dlog('child:err', String(d).trimEnd()));

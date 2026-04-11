@@ -7,6 +7,7 @@ import cors from 'cors';
 import { WebSocketServer } from 'ws';
 import { createServer, Server as HttpServer } from 'http';
 import path from 'path';
+import fs from 'fs';
 import logger from '../mcp/utils/logger.js';
 import {
   elements,
@@ -41,6 +42,13 @@ export interface CanvasAppOptions {
   rootHandler?: (req: Request, res: Response, next: NextFunction) => void;
   /** Middleware finale per asset static (prod binary). */
   staticHandler?: (req: Request, res: Response, next: NextFunction) => void;
+  /** Invoked on POST /api/claude/quit after the response is sent. The
+   * caller owns shutdown: kill window/child, close server, process.exit. */
+  onQuit?: () => void;
+  /** Path to an .excalidraw file to hydrate on startup. If a sibling .md
+   * file exists, its content is armed as session memory and delivered to
+   * Claude on the next signal (Feature 3). */
+  loadScenePath?: string;
 }
 
 export interface CanvasApp {
@@ -58,6 +66,41 @@ const wss = new WebSocketServer({ server });
 // Middleware
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
+
+// Session memory loaded from a sibling .md of the .excalidraw file just
+// opened — consumed once on the next /api/claude/signal (Feature 3).
+// Declared here (early) so the startup hydration block below can arm it.
+let pendingSessionMemory: string | null = null;
+
+// Startup scene hydration (Feature 3): if a load path was provided, read the
+// .excalidraw file and populate the in-memory maps, then arm the session
+// memory from the sibling .md if present.
+if (options.loadScenePath) {
+  try {
+    const raw = fs.readFileSync(options.loadScenePath, 'utf-8');
+    const scene = JSON.parse(raw);
+    if (Array.isArray(scene.elements)) {
+      elements.clear();
+      for (const el of scene.elements as ServerElement[]) {
+        if (el && el.id) elements.set(el.id, el);
+      }
+      logger.info(`[load] hydrated ${elements.size} elements from ${options.loadScenePath}`);
+    }
+    if (scene.files && typeof scene.files === 'object') {
+      files.clear();
+      for (const [id, f] of Object.entries(scene.files as Record<string, ExcalidrawFile>)) {
+        files.set(id, f);
+      }
+    }
+    const mdPath = options.loadScenePath.replace(/\.excalidraw$/, '.md');
+    if (fs.existsSync(mdPath)) {
+      pendingSessionMemory = fs.readFileSync(mdPath, 'utf-8');
+      logger.info(`[load] armed session memory from ${mdPath} (${pendingSessionMemory.length} chars)`);
+    }
+  } catch (err) {
+    logger.error(`[load] failed to hydrate from ${options.loadScenePath}: ${(err as Error).message}`);
+  }
+}
 
 // Request logger (debug level → winston file). Catches every request
 // before any route handler so we can trace signals end-to-end.
@@ -1261,6 +1304,63 @@ interface ChatMessage {
 }
 const claudeMessages: ChatMessage[] = [];
 
+// Claude "thinking" / tool activity status (Feature 1)
+interface ClaudeStatus {
+  busy: boolean;
+  tool: string | null;
+  label: string | null;
+}
+let claudeStatus: ClaudeStatus = { busy: false, tool: null, label: null };
+let claudeBusyTimeout: NodeJS.Timeout | null = null;
+
+const TOOL_LABELS: Record<string, (args?: any) => string> = {
+  create_element: (a) => `Drawing ${a?.type || 'element'}...`,
+  batch_create_elements: () => 'Drawing batch...',
+  update_element: () => 'Updating element...',
+  delete_element: () => 'Deleting element...',
+  query_elements: () => 'Searching elements...',
+  get_element: () => 'Reading element...',
+  describe_scene: () => 'Reading scene...',
+  get_canvas_screenshot: () => 'Looking at canvas...',
+  create_from_mermaid: () => 'Rendering mermaid...',
+  annotate: () => 'Annotating...',
+  save_session: () => 'Saving session...',
+  export_scene: () => 'Exporting scene...',
+  export_to_image: () => 'Exporting image...',
+  align_elements: () => 'Aligning...',
+  distribute_elements: () => 'Distributing...',
+  group_elements: () => 'Grouping...',
+  ungroup_elements: () => 'Ungrouping...',
+  duplicate_elements: () => 'Duplicating...',
+  lock_elements: () => 'Locking...',
+  unlock_elements: () => 'Unlocking...',
+  set_viewport: () => 'Adjusting viewport...',
+  clear_canvas: () => 'Clearing canvas...',
+};
+
+function humanizeToolName(tool: string): string {
+  return tool
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase()) + '...';
+}
+
+function setClaudeStatus(next: ClaudeStatus): void {
+  claudeStatus = next;
+  broadcast({ type: 'claude_status', ...next } as any);
+  if (claudeBusyTimeout) {
+    clearTimeout(claudeBusyTimeout);
+    claudeBusyTimeout = null;
+  }
+  if (next.busy) {
+    claudeBusyTimeout = setTimeout(() => {
+      logger.info('[claude_status] safety timeout fired — resetting busy');
+      claudeStatus = { busy: false, tool: null, label: null };
+      broadcast({ type: 'claude_status', ...claudeStatus } as any);
+      claudeBusyTimeout = null;
+    }, 90_000);
+  }
+}
+
 interface ChangeLogEntry {
   element_id: string;
   action: 'created' | 'updated' | 'deleted';
@@ -1290,6 +1390,36 @@ function summarizeChanges(changes: ChangeLogEntry[]): string {
   return `Umano: ${created} creati, ${updated} aggiornati, ${deleted} eliminati.`;
 }
 
+// Feature 3: build a compact markdown transcript of the current session by
+// filtering out noise (action/system/info) and keeping only substantive turns.
+function buildSessionMemoryMarkdown(title: string): string {
+  const significant = claudeMessages.filter((m) =>
+    m.type === 'text' || m.type === 'question' || m.type === 'annotation' || m.type === 'suggestion',
+  );
+  const lines: string[] = [];
+  lines.push(`# Session: ${title}`);
+  lines.push(`Saved: ${new Date().toISOString()}`);
+  lines.push(`Element count: ${elements.size}`);
+  lines.push('');
+  lines.push('## Conversation');
+  if (significant.length === 0) {
+    lines.push('_(no significant dialogue)_');
+  } else {
+    for (const m of significant) {
+      const who = m.sender === 'human' ? 'You' : 'Claude';
+      const tag = m.type && m.type !== 'text' ? ` _(${m.type})_` : '';
+      let body = (m.content || '').replace(/\s+$/g, '');
+      if (body.length > 500) body = body.slice(0, 500) + '…';
+      lines.push(`**${who}${tag}:** ${body}`);
+    }
+  }
+  lines.push('');
+  lines.push('## Canvas summary at save time');
+  lines.push(generateCanvasSummary());
+  lines.push('');
+  return lines.join('\n');
+}
+
 // POST /api/claude/wait-for-signal — long-poll (chiamato dal MCP server)
 app.post('/api/claude/wait-for-signal', async (req: Request, res: Response) => {
   const { timeout_ms = 300_000 } = req.body || {};
@@ -1308,18 +1438,23 @@ app.post('/api/claude/wait-for-signal', async (req: Request, res: Response) => {
 
 // POST /api/claude/signal — chiamato dal frontend quando l'umano clicca
 app.post('/api/claude/signal', (req: Request, res: Response) => {
-  const { signal_type, message } = req.body || {};
-  logger.info(`[signal] RECEIVED from frontend: type=${signal_type} message="${(message || '').slice(0, 120)}" pending=${pendingSignalResolvers.length}`);
+  const { signal_type, message, sceneUnchangedSinceLastTurn } = req.body || {};
+  logger.info(`[signal] RECEIVED from frontend: type=${signal_type} message="${(message || '').slice(0, 120)}" pending=${pendingSignalResolvers.length} sceneUnchanged=${!!sceneUnchangedSinceLastTurn}`);
   const summary = generateCanvasSummary();
   const recentHumanChanges = changeLog.filter(
     (c) => c.author === 'human' && Date.now() - c.timestamp.getTime() < 60_000,
   );
+  // Consume one-shot session memory if set by a recent load (Feature 3).
+  const sessionMemory = pendingSessionMemory;
+  if (sessionMemory) pendingSessionMemory = null;
   const payload = {
     signal_type: signal_type || 'look',
     message,
     canvas_summary: summary,
     changed_elements: recentHumanChanges,
     element_count: elements.size,
+    sceneUnchangedSinceLastTurn: !!sceneUnchangedSinceLastTurn,
+    sessionMemory,
   };
   while (pendingSignalResolvers.length > 0) {
     const { resolve, timeout } = pendingSignalResolvers.shift()!;
@@ -1328,6 +1463,26 @@ app.post('/api/claude/signal', (req: Request, res: Response) => {
   }
   // Broadcast via WebSocket per informare altri client
   broadcast({ type: 'human_signal', signal_type, message } as any);
+  // Optimistic: Claude now has the turn — show Thinking indicator.
+  setClaudeStatus({ busy: true, tool: null, label: 'Thinking...' });
+  res.json({ ok: true });
+});
+
+// POST /api/claude/tool-activity — called by the MCP dispatcher on each tool
+// start/end so the sidebar can display what Claude is currently doing.
+app.post('/api/claude/tool-activity', (req: Request, res: Response) => {
+  const { tool, phase, args } = req.body || {};
+  if (typeof tool !== 'string' || (phase !== 'start' && phase !== 'end')) {
+    return res.status(400).json({ ok: false, error: 'invalid body' });
+  }
+  if (phase === 'start') {
+    const labelFn = TOOL_LABELS[tool];
+    const label = labelFn ? labelFn(args) : humanizeToolName(tool);
+    setClaudeStatus({ busy: true, tool, label });
+  } else if (claudeStatus.tool === tool) {
+    // Keep busy=true but clear current tool label → fall back to Thinking.
+    setClaudeStatus({ busy: true, tool: null, label: 'Thinking...' });
+  }
   res.json({ ok: true });
 });
 
@@ -1342,6 +1497,8 @@ app.post('/api/claude/message', (req: Request, res: Response) => {
   };
   claudeMessages.push(msg);
   broadcast({ type: 'claude_message', message: msg } as any);
+  // Final claude message → turn finished, clear busy.
+  setClaudeStatus({ busy: false, tool: null, label: null });
   res.json({ ok: true, id: msg.id });
 });
 
@@ -1566,6 +1723,68 @@ app.get('/api/export/scene', (req: Request, res: Response) => {
   res.json(scene);
 });
 
+// POST /api/claude/save — writes current scene to disk under
+// $CWD/excalidraw/<slug>-<timestamp>.excalidraw. Returns the saved path.
+app.post('/api/claude/save', (req: Request, res: Response) => {
+  try {
+    const title: string = (req.body?.title || options.title || 'canvas') as string;
+    const slug = title
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '') || 'canvas';
+    const stamp = new Date()
+      .toISOString()
+      .replace(/[:.]/g, '-')
+      .replace(/T/, '_')
+      .replace(/Z$/, '');
+    const outDir = path.join(process.cwd(), 'excalidraw');
+    fs.mkdirSync(outDir, { recursive: true });
+    const outPath = path.join(outDir, `${slug}-${stamp}.excalidraw`);
+    const scene = {
+      type: 'excalidraw',
+      version: 2,
+      source: 'excaliclaude',
+      elements: Array.from(elements.values()),
+      appState: { viewBackgroundColor: '#FFFFFF' },
+      files: Object.fromEntries(files),
+    };
+    fs.writeFileSync(outPath, JSON.stringify(scene, null, 2), 'utf-8');
+    logger.info(`[save] scene saved to ${outPath} (${elements.size} elements)`);
+    // Companion session memory (.md) — Feature 3.
+    let memoryPath: string | null = null;
+    try {
+      memoryPath = outPath.replace(/\.excalidraw$/, '.md');
+      const md = buildSessionMemoryMarkdown(title);
+      fs.writeFileSync(memoryPath, md, 'utf-8');
+      logger.info(`[save] session memory saved to ${memoryPath}`);
+    } catch (memErr) {
+      logger.warn(`[save] session memory write failed: ${(memErr as Error).message}`);
+      memoryPath = null;
+    }
+    res.json({ ok: true, path: outPath, memoryPath, elementCount: elements.size });
+  } catch (err) {
+    logger.error('[save] failed:', err);
+    res.status(500).json({ ok: false, error: (err as Error).message });
+  }
+});
+
+// POST /api/claude/quit — tells the process to shut down. Responds first,
+// then invokes the caller-provided shutdown hook (or falls back to
+// process.exit) on next tick so the client receives the reply.
+app.post('/api/claude/quit', (_req: Request, res: Response) => {
+  logger.info('[quit] received quit request, shutting down in 150ms');
+  res.json({ ok: true });
+  setTimeout(() => {
+    try {
+      if (options.onQuit) options.onQuit();
+      else process.exit(0);
+    } catch (err) {
+      logger.error('[quit] onQuit threw:', err);
+      process.exit(1);
+    }
+  }, 150);
+});
+
 // POST /api/import — re-idrata una scena caricata da file .excalidraw
 app.post('/api/import', (req: Request, res: Response) => {
   try {
@@ -1581,6 +1800,38 @@ app.post('/api/import', (req: Request, res: Response) => {
   } catch (err) {
     res.status(500).json({ ok: false, error: (err as Error).message });
   }
+});
+
+// GET /api/claude/session-memory?path=<excalidraw-path>
+// Reads the sibling .md file for a given .excalidraw path, if present.
+// Path must live inside $CWD/excalidraw to avoid arbitrary file reads.
+app.get('/api/claude/session-memory', (req: Request, res: Response) => {
+  try {
+    const rawPath = String(req.query.path || '');
+    if (!rawPath) return res.status(400).json({ ok: false, error: 'missing path' });
+    const resolved = path.resolve(rawPath);
+    const allowedRoot = path.resolve(path.join(process.cwd(), 'excalidraw'));
+    if (!resolved.startsWith(allowedRoot + path.sep) && resolved !== allowedRoot) {
+      return res.status(403).json({ ok: false, error: 'path outside allowed root' });
+    }
+    const mdPath = resolved.replace(/\.excalidraw$/, '.md');
+    if (!fs.existsSync(mdPath)) return res.json({ ok: true, memory: null });
+    const memory = fs.readFileSync(mdPath, 'utf-8');
+    res.json({ ok: true, memory, memoryPath: mdPath });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: (err as Error).message });
+  }
+});
+
+// POST /api/claude/session-memory — arms the one-shot session memory that
+// will be delivered to Claude on the next /api/claude/signal.
+app.post('/api/claude/session-memory', (req: Request, res: Response) => {
+  const memory = typeof req.body?.memory === 'string' ? req.body.memory : null;
+  pendingSessionMemory = memory || null;
+  logger.info(
+    `[session-memory] armed (${pendingSessionMemory ? pendingSessionMemory.length + ' chars' : 'cleared'})`,
+  );
+  res.json({ ok: true });
 });
 
 // Optional final static handler (prod binary serves embedded assets)

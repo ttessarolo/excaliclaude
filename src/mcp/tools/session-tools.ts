@@ -216,6 +216,25 @@ export async function registerSessionToolsLegacy(
           if (result.canvas_summary) {
             content.push({ type: 'text', text: `Stato canvas:\n${result.canvas_summary}` });
           }
+          if (result.sceneUnchangedSinceLastTurn) {
+            content.push({
+              type: 'text',
+              text:
+                '[Scene diff hint] La scena non è cambiata dall\'ultimo turn: ' +
+                'riusa la descrizione/screenshot precedente e NON richiamare ' +
+                'describe_scene o get_canvas_screenshot per risparmiare token, ' +
+                'a meno che non sia strettamente necessario.',
+            });
+          }
+          if (result.sessionMemory) {
+            content.push({
+              type: 'text',
+              text:
+                '[Session memory from previous save]\n' +
+                String(result.sessionMemory) +
+                '\n[/Session memory]',
+            });
+          }
           if (result.screenshot_base64) {
             content.push({
               type: 'image',
