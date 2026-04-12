@@ -2450,14 +2450,8 @@ async function runServer(): Promise<void> {
             httpLog(`POST ${methodLabel}`, { id: body.id });
           }
 
-          if (sessionId && httpSessions.has(sessionId)) {
-            // Existing session
-            httpLog(`Routing to existing session ${sessionId}`);
-            await httpSessions.get(sessionId)!.transport.handleRequest(req, res, body);
-            httpLog(`Response sent for session ${sessionId}`);
-          } else if (!sessionId) {
-            // New session — create fresh Server + Transport pair
-            httpLog('Creating new session (no session ID in request)');
+          // Helper: create a fresh MCP Server + Transport session
+          const createNewSession = async () => {
             const transport = new StreamableHTTPServerTransport({
               sessionIdGenerator: () => randomUUID(),
             });
@@ -2488,14 +2482,21 @@ async function runServer(): Promise<void> {
               httpSessions.set(transport.sessionId, { server, transport });
               httpLog(`Session registered: ${transport.sessionId}`);
             }
+          };
+
+          if (sessionId && httpSessions.has(sessionId)) {
+            // Existing session
+            httpLog(`Routing to existing session ${sessionId}`);
+            await httpSessions.get(sessionId)!.transport.handleRequest(req, res, body);
+            httpLog(`Response sent for session ${sessionId}`);
+          } else if (!sessionId) {
+            // New session — no session ID in request
+            httpLog('Creating new session (no session ID in request)');
+            await createNewSession();
           } else {
-            // Unknown session ID
-            httpLog(`Unknown session ID: ${sessionId} (known: ${[...httpSessions.keys()].join(', ')})`);
-            res.writeHead(404).end(JSON.stringify({
-              jsonrpc: '2.0',
-              error: { code: -32000, message: 'Session not found' },
-              id: null,
-            }));
+            // Unknown session ID (e.g. after server restart) — create new session
+            httpLog(`Unknown session ID ${sessionId}, creating new session`);
+            await createNewSession();
           }
         } else if (req.method === 'GET') {
           httpLog(`GET SSE stream request`, { sessionId });
