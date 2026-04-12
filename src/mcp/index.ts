@@ -864,7 +864,6 @@ function createMcpServer(): Server {
 }
 
 const stdioServer = createMcpServer();
-const httpMcpServer = createMcpServer();
 
 // Helper function to convert text property to label format for Excalidraw
 function convertTextToLabel(element: ServerElement): ServerElement {
@@ -2290,7 +2289,9 @@ function registerHandlers(s: Server): void {
   s.setRequestHandler(ListToolsRequestSchema, listToolsHandler);
 }
 registerHandlers(stdioServer);
-registerHandlers(httpMcpServer);
+
+// Per-session map for HTTP transport — each connecting client gets its own Server+Transport
+const httpSessions = new Map<string, { server: Server; transport: StreamableHTTPServerTransport }>();
 
 // Start server — stdio + HTTP (default) or HTTP-only (--http-only)
 async function runServer(): Promise<void> {
@@ -2298,10 +2299,6 @@ async function runServer(): Promise<void> {
     logger.info('Starting Excalidraw MCP server...');
 
     // --- HTTP transport (always starts) ---
-    const httpTransport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: () => randomUUID(),
-    });
-
     const nodeHttpServer = createHttpServer(async (req, res) => {
       // CORS
       res.setHeader('Access-Control-Allow-Origin', '*');
@@ -2318,15 +2315,54 @@ async function runServer(): Promise<void> {
         return;
       }
 
+      const sessionId = req.headers['mcp-session-id'] as string | undefined;
+
       try {
         if (req.method === 'POST') {
           const chunks: Buffer[] = [];
           for await (const chunk of req) chunks.push(chunk as Buffer);
           const body = JSON.parse(Buffer.concat(chunks).toString());
-          await httpTransport.handleRequest(req, res, body);
+
+          if (sessionId && httpSessions.has(sessionId)) {
+            // Existing session
+            await httpSessions.get(sessionId)!.transport.handleRequest(req, res, body);
+          } else if (!sessionId) {
+            // New session — create fresh Server + Transport pair
+            const transport = new StreamableHTTPServerTransport({
+              sessionIdGenerator: () => randomUUID(),
+            });
+            const server = createMcpServer();
+            registerHandlers(server);
+
+            transport.onclose = () => {
+              const sid = transport.sessionId;
+              if (sid) {
+                httpSessions.delete(sid);
+                logger.info(`HTTP session ${sid} closed`);
+              }
+              server.close().catch(() => {});
+            };
+
+            await server.connect(transport);
+            await transport.handleRequest(req, res, body);
+
+            if (transport.sessionId) {
+              httpSessions.set(transport.sessionId, { server, transport });
+              logger.info(`New HTTP session: ${transport.sessionId}`);
+            }
+          } else {
+            // Unknown session ID
+            res.writeHead(404).end(JSON.stringify({
+              jsonrpc: '2.0',
+              error: { code: -32000, message: 'Session not found' },
+              id: null,
+            }));
+          }
+        } else if (sessionId && httpSessions.has(sessionId)) {
+          // GET (SSE) and DELETE for existing sessions
+          await httpSessions.get(sessionId)!.transport.handleRequest(req, res);
         } else {
-          // GET (SSE) and DELETE
-          await httpTransport.handleRequest(req, res);
+          res.writeHead(400).end('Missing or invalid mcp-session-id');
         }
       } catch (err) {
         logger.error('HTTP transport error:', err);
@@ -2336,7 +2372,6 @@ async function runServer(): Promise<void> {
       }
     });
 
-    await httpMcpServer.connect(httpTransport);
     nodeHttpServer.listen(MCP_HTTP_PORT, () => {
       logger.info(`HTTP MCP transport listening on port ${MCP_HTTP_PORT}`);
       process.stderr.write(`ExcaliClaude HTTP MCP: http://localhost:${MCP_HTTP_PORT}/mcp\n`);
@@ -2358,12 +2393,15 @@ async function runServer(): Promise<void> {
   }
 }
 
-// Graceful shutdown — close all canvas sessions and both servers before exiting
+// Graceful shutdown — close all canvas sessions and MCP servers before exiting
 async function shutdown(code: number = 0): Promise<void> {
   try {
     await sessionManager.cleanup();
     await stdioServer.close().catch(() => {});
-    await httpMcpServer.close().catch(() => {});
+    for (const [, { server }] of httpSessions) {
+      await server.close().catch(() => {});
+    }
+    httpSessions.clear();
   } catch (err) {
     logger.warn(`Cleanup error: ${err}`);
   }
