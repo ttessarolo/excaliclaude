@@ -2372,20 +2372,36 @@ async function runServer(): Promise<void> {
       }
     });
 
+    // --- stdio transport first (unless --http-only) ---
+    if (!HTTP_ONLY) {
+      const stdioTransport = new StdioServerTransport();
+      await stdioServer.connect(stdioTransport);
+      process.stdin.resume();
+      logger.info('stdio transport connected');
+    }
+
+    // --- HTTP listen (best-effort: port conflict must not crash stdio) ---
+    nodeHttpServer.on('error', (err: NodeJS.ErrnoException) => {
+      if (err.code === 'EADDRINUSE') {
+        logger.warn(`HTTP port ${MCP_HTTP_PORT} already in use — running stdio only`);
+        process.stderr.write(`ExcaliClaude: HTTP port ${MCP_HTTP_PORT} busy, stdio-only mode\n`);
+      } else {
+        logger.error('HTTP server error:', err);
+      }
+      if (HTTP_ONLY) {
+        // In HTTP-only mode, port failure is fatal
+        process.exit(1);
+      }
+    });
+
     nodeHttpServer.listen(MCP_HTTP_PORT, () => {
       logger.info(`HTTP MCP transport listening on port ${MCP_HTTP_PORT}`);
       process.stderr.write(`ExcaliClaude HTTP MCP: http://localhost:${MCP_HTTP_PORT}/mcp\n`);
     });
 
-    // --- stdio transport (unless --http-only) ---
-    if (!HTTP_ONLY) {
-      const stdioTransport = new StdioServerTransport();
-      await stdioServer.connect(stdioTransport);
-      logger.info('Excalidraw MCP server running on stdio + HTTP');
-      process.stdin.resume();
-    } else {
-      logger.info('Excalidraw MCP server running on HTTP only (--http-only)');
-    }
+    logger.info(HTTP_ONLY
+      ? 'Excalidraw MCP server running on HTTP only (--http-only)'
+      : 'Excalidraw MCP server running on stdio + HTTP');
   } catch (error) {
     logger.error('Error starting server:', error);
     process.stderr.write(`Failed to start MCP server: ${(error as Error).message}\n${(error as Error).stack}\n`);
