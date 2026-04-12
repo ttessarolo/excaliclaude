@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -23,6 +23,26 @@ function formatTime(ts: string | Date): string {
   } catch {
     return '';
   }
+}
+
+function CopyButton({ text }: { text: string }): JSX.Element {
+  const [copied, setCopied] = useState(false);
+  const onClick = useCallback(() => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    }).catch(() => {});
+  }, [text]);
+  return (
+    <button
+      className="copy-message-btn"
+      onClick={onClick}
+      title="Copy message"
+      aria-label="Copy message"
+    >
+      {copied ? '✓' : '⎘'}
+    </button>
+  );
 }
 
 export function ChatThread({ messages, onFocusElements }: Props): JSX.Element {
@@ -74,6 +94,9 @@ export function ChatThread({ messages, onFocusElements }: Props): JSX.Element {
               >
                 📍 Show on canvas
               </button>
+            )}
+            {msg.sender !== 'system' && msg.content && (
+              <CopyButton text={msg.content} />
             )}
           </div>
           <time className="message-time">{formatTime(msg.timestamp)}</time>

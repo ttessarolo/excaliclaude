@@ -266,6 +266,24 @@ export class SessionManager {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(scene),
         });
+
+        // Arm session memory from companion .md if present.
+        // Check both sibling .md (legacy) and memory.md in same folder (new format).
+        const loadDir = path.dirname(options.loadFrom);
+        const siblingMd = options.loadFrom.replace(/\.excalidraw$/, '.md');
+        const folderMd = path.join(loadDir, 'memory.md');
+        const mdPath = fs.existsSync(folderMd) ? folderMd
+          : fs.existsSync(siblingMd) ? siblingMd
+          : null;
+        if (mdPath) {
+          const memory = await fs.promises.readFile(mdPath, 'utf-8');
+          await fetch(`${url}/api/claude/session-memory`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ memory }),
+          }).catch(() => {});
+          logger.info(`[SessionManager] Armed session memory from ${mdPath} (${memory.length} chars)`);
+        }
       } catch (err) {
         logger.warn(`[SessionManager] Could not load ${options.loadFrom}: ${err}`);
       }

@@ -97,8 +97,14 @@ if (options.loadScenePath) {
         files.set(id, f);
       }
     }
-    const mdPath = options.loadScenePath.replace(/\.excalidraw$/, '.md');
-    if (fs.existsSync(mdPath)) {
+    // Check both memory.md in same folder (new format) and sibling .md (legacy)
+    const loadDir = path.dirname(options.loadScenePath);
+    const folderMd = path.join(loadDir, 'memory.md');
+    const siblingMd = options.loadScenePath.replace(/\.excalidraw$/, '.md');
+    const mdPath = fs.existsSync(folderMd) ? folderMd
+      : fs.existsSync(siblingMd) ? siblingMd
+      : null;
+    if (mdPath) {
       pendingSessionMemory = fs.readFileSync(mdPath, 'utf-8');
       logger.info(`[load] armed session memory from ${mdPath} (${pendingSessionMemory.length} chars)`);
     }
@@ -1495,9 +1501,13 @@ app.post('/api/claude/tool-activity', (req: Request, res: Response) => {
     return res.status(400).json({ ok: false, error: 'invalid body' });
   }
   if (phase === 'start') {
-    const labelFn = TOOL_LABELS[tool];
-    const label = labelFn ? labelFn(args) : humanizeToolName(tool);
-    setClaudeStatus({ busy: true, tool, label });
+    if (tool === 'wait_for_human') {
+      setClaudeStatus({ busy: false, tool: null, label: null });
+    } else {
+      const labelFn = TOOL_LABELS[tool];
+      const label = labelFn ? labelFn(args) : humanizeToolName(tool);
+      setClaudeStatus({ busy: true, tool, label });
+    }
   } else if (claudeStatus.tool === tool) {
     // Keep busy=true but clear current tool label → fall back to Thinking.
     setClaudeStatus({ busy: true, tool: null, label: 'Thinking...' });
@@ -1743,7 +1753,7 @@ app.get('/api/export/scene', (req: Request, res: Response) => {
 });
 
 // POST /api/claude/save — writes current scene to disk under
-// $CWD/excalidraw/<slug>-<timestamp>.excalidraw. Returns the saved path.
+// $CWD/excalidraw/<slug>-<YYYYMMDD>/<slug>.excalidraw + memory.md
 app.post('/api/claude/save', (req: Request, res: Response) => {
   try {
     const title: string = (req.body?.title || options.title || 'canvas') as string;
@@ -1751,14 +1761,12 @@ app.post('/api/claude/save', (req: Request, res: Response) => {
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-+|-+$/g, '') || 'canvas';
-    const stamp = new Date()
-      .toISOString()
-      .replace(/[:.]/g, '-')
-      .replace(/T/, '_')
-      .replace(/Z$/, '');
-    const outDir = path.join(process.cwd(), 'excalidraw');
+    const now = new Date();
+    const shortDate = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+    const folderName = `${slug}-${shortDate}`;
+    const outDir = path.join(process.cwd(), 'excalidraw', folderName);
     fs.mkdirSync(outDir, { recursive: true });
-    const outPath = path.join(outDir, `${slug}-${stamp}.excalidraw`);
+    const outPath = path.join(outDir, `${slug}.excalidraw`);
     const scene = {
       type: 'excalidraw',
       version: 2,
@@ -1769,10 +1777,10 @@ app.post('/api/claude/save', (req: Request, res: Response) => {
     };
     fs.writeFileSync(outPath, JSON.stringify(scene, null, 2), 'utf-8');
     logger.info(`[save] scene saved to ${outPath} (${elements.size} elements)`);
-    // Companion session memory (.md) — Feature 3.
+    // Companion session memory (.md)
     let memoryPath: string | null = null;
     try {
-      memoryPath = outPath.replace(/\.excalidraw$/, '.md');
+      memoryPath = path.join(outDir, 'memory.md');
       const md = buildSessionMemoryMarkdown(title);
       fs.writeFileSync(memoryPath, md, 'utf-8');
       logger.info(`[save] session memory saved to ${memoryPath}`);

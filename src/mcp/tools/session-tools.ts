@@ -381,12 +381,66 @@ export async function registerSessionToolsLegacy(
           throw new Error(`HTTP ${sceneRes.status}`);
         }
         const scene = await sceneRes.json();
-        const absPath = path.resolve(a.path);
-        await fs.promises.mkdir(path.dirname(absPath), { recursive: true });
-        await fs.promises.writeFile(absPath, JSON.stringify(scene, null, 2));
-        logger.info(`Session saved to ${absPath}`);
+
+        // Build folder: <parent>/<slug>-<YYYYMMDD>/
+        const rawPath = path.resolve(a.path);
+        const baseName = path.basename(rawPath, '.excalidraw') || 'canvas';
+        const parentDir = path.dirname(rawPath);
+        const now = new Date();
+        const shortDate = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+        const folderName = `${baseName}-${shortDate}`;
+        const outDir = path.join(parentDir, folderName);
+        await fs.promises.mkdir(outDir, { recursive: true });
+
+        const excalidrawPath = path.join(outDir, `${baseName}.excalidraw`);
+        await fs.promises.writeFile(excalidrawPath, JSON.stringify(scene, null, 2));
+        logger.info(`Session saved to ${excalidrawPath}`);
+
+        // Companion session memory (.md)
+        const memoryPath = path.join(outDir, 'memory.md');
+        try {
+          const memRes = await fetch(`${baseUrl}/api/claude/save`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title: baseName }),
+          });
+          const memResult: any = await memRes.json();
+          // The /api/claude/save endpoint writes its own files, but we need the
+          // memory markdown content. Fetch it from the session-memory endpoint.
+          // Instead, just read the messages and build memory ourselves.
+          const msgsRes = await fetch(`${baseUrl}/api/claude/messages`);
+          if (msgsRes.ok) {
+            const msgs: any[] = await msgsRes.json();
+            const significant = msgs.filter((m: any) =>
+              m.type === 'text' || m.type === 'question' || m.type === 'annotation' || m.type === 'suggestion',
+            );
+            const lines: string[] = [
+              `# Session: ${baseName}`,
+              `Saved: ${now.toISOString()}`,
+              '',
+              '## Conversation',
+            ];
+            if (significant.length === 0) {
+              lines.push('_(no significant dialogue)_');
+            } else {
+              for (const m of significant) {
+                const who = m.sender === 'human' ? 'You' : 'Claude';
+                const tag = m.type && m.type !== 'text' ? ` _(${m.type})_` : '';
+                let body = (m.content || '').replace(/\s+$/g, '');
+                if (body.length > 500) body = body.slice(0, 500) + '…';
+                lines.push(`**${who}${tag}:** ${body}`);
+              }
+            }
+            lines.push('');
+            await fs.promises.writeFile(memoryPath, lines.join('\n'));
+            logger.info(`Session memory saved to ${memoryPath}`);
+          }
+        } catch (memErr) {
+          logger.warn(`Session memory write failed: ${(memErr as Error).message}`);
+        }
+
         return {
-          content: [{ type: 'text', text: `Canvas salvato in ${absPath}` }],
+          content: [{ type: 'text', text: `Canvas salvato in ${outDir}/\n  → ${baseName}.excalidraw\n  → memory.md` }],
         };
       } catch (err) {
         return {

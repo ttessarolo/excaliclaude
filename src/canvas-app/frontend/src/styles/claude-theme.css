@@ -187,6 +187,8 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .chat-thread::-webkit-scrollbar {
@@ -401,6 +403,42 @@
 }
 .focus-elements-btn:hover {
   text-decoration: underline;
+}
+
+/* ── Copy button on message bubbles ─────────────────────── */
+.copy-message-btn {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  background: var(--claude-surface);
+  border: 1px solid var(--claude-border);
+  border-radius: 4px;
+  color: var(--claude-text-muted);
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px 5px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.message-content {
+  position: relative;
+}
+.message-content:hover .copy-message-btn {
+  opacity: 1;
+}
+.copy-message-btn:hover {
+  background: var(--claude-bg-hover);
+  color: var(--claude-text);
+}
+.chat-message.human .copy-message-btn {
+  background: rgba(255,255,255,0.15);
+  border-color: rgba(255,255,255,0.25);
+  color: rgba(255,255,255,0.7);
+}
+.chat-message.human .copy-message-btn:hover {
+  background: rgba(255,255,255,0.25);
+  color: white;
 }
 
 /* ── Footer / input ──────────────────────────────────────── */
