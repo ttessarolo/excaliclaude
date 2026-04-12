@@ -2340,6 +2340,8 @@ async function runServer(): Promise<void> {
                 httpSessions.delete(sid);
                 logger.info(`HTTP session ${sid} closed`);
               }
+              // Break the cycle: server.close() → transport.close() → onclose
+              transport.onclose = undefined;
               server.close().catch(() => {});
             };
 
