@@ -964,6 +964,24 @@ function App(): JSX.Element {
     shutdownServer()
   }
 
+  // Cmd/Ctrl+S → save to backend (replaces native Excalidraw save)
+  const [saveFlash, setSaveFlash] = useState(false)
+  useEffect(() => {
+    const onKeyDown = (e: globalThis.KeyboardEvent): void => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+        e.preventDefault()
+        saveCurrentScene().then((p) => {
+          if (p) {
+            setSaveFlash(true)
+            setTimeout(() => setSaveFlash(false), 1500)
+          }
+        })
+      }
+    }
+    window.addEventListener('keydown', onKeyDown, { capture: true })
+    return () => window.removeEventListener('keydown', onKeyDown, { capture: true })
+  }, [])
+
   // Best-effort: browser-level beforeunload intercept. In webview-bun this
   // may not reliably fire for native close, but it covers Cmd+R / in-app
   // navigation cases.
@@ -983,6 +1001,7 @@ function App(): JSX.Element {
 
   return (
     <div className="excaliclaude-root" data-theme={isDark ? 'dark' : 'light'}>
+      {saveFlash && <div className="save-flash">Saved!</div>}
       <div className="excaliclaude-canvas-wrap">
         <div
           onPointerDownCapture={() => {
@@ -999,7 +1018,13 @@ function App(): JSX.Element {
               registerExcalidrawAPIForClipboard(api as any)
             }}
             theme={isDark ? 'dark' : 'light'}
-            UIOptions={{ canvasActions: { toggleTheme: true } }}
+            UIOptions={{
+              canvasActions: {
+                toggleTheme: true,
+                saveToActiveFile: false,
+                export: { saveFileToDisk: false },
+              },
+            }}
             onChange={(elements, appState) => {
               // Track elements created through UI as "human"
               trackElementAuthor(elements as any)

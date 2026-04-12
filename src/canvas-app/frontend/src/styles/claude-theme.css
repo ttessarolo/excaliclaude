@@ -629,6 +629,31 @@
   border-color: var(--claude-error);
 }
 
+/* ── Save flash indicator ───────────────────────────────── */
+.save-flash {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--claude-accent);
+  color: white;
+  padding: 8px 20px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  z-index: 9999;
+  animation: saveFlashIn 0.2s ease, saveFlashOut 0.3s ease 1.2s forwards;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+@keyframes saveFlashIn {
+  from { opacity: 0; transform: translateX(-50%) translateY(-8px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+@keyframes saveFlashOut {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
 /* ── Animations ──────────────────────────────────────────── */
 @keyframes fadeIn {
   from {
