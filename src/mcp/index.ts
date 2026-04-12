@@ -294,75 +294,170 @@ const ResourceSchema = z.object({
 // Diagram design guide — injected into LLM context via read_diagram_guide tool
 const DIAGRAM_DESIGN_GUIDE = `# Excalidraw Diagram Design Guide
 
-## Color Palette
+## Semantic Color Mapping
 
-### Stroke Colors (use for borders & text)
-| Name    | Hex       | Use for                     |
-|---------|-----------|-----------------------------|
-| Black   | #1e1e1e   | Default text & borders      |
-| Red     | #e03131   | Errors, warnings, critical  |
-| Green   | #2f9e44   | Success, approved, healthy  |
-| Blue    | #1971c2   | Primary actions, links      |
-| Purple  | #9c36b5   | Services, middleware        |
-| Orange  | #e8590c   | Async, queues, events       |
-| Cyan    | #0c8599   | Data stores, databases      |
-| Gray    | #868e96   | Annotations, secondary      |
+Pick fill + stroke by **component type**. Limit to 3–5 categories per diagram.
 
-### Fill Colors (use for backgroundColor — pastel fills)
-| Name         | Hex       | Pairs with stroke |
-|--------------|-----------|-------------------|
-| Light Red    | #ffc9c9   | #e03131           |
-| Light Green  | #b2f2bb   | #2f9e44           |
-| Light Blue   | #a5d8ff   | #1971c2           |
-| Light Purple | #eebefa   | #9c36b5           |
-| Light Orange | #ffd8a8   | #e8590c           |
-| Light Cyan   | #99e9f2   | #0c8599           |
-| Light Gray   | #e9ecef   | #868e96           |
-| White        | #ffffff   | #1e1e1e           |
+| Component Type          | Fill (backgroundColor) | Stroke (strokeColor) |
+|-------------------------|------------------------|----------------------|
+| Frontend / UI           | #a5d8ff                | #1971c2              |
+| Backend / API           | #d0bfff                | #7048e8              |
+| Database                | #b2f2bb                | #2f9e44              |
+| Storage / Files         | #ffec99                | #f08c00              |
+| Cache                   | #ffe8cc                | #fd7e14              |
+| Message Queue / Events  | #fff3bf                | #fab005              |
+| AI / ML                 | #e599f7                | #9c36b5              |
+| External Services / APIs| #ffc9c9                | #e03131              |
+| Users / Entry Points    | #e7f5ff                | #1971c2              |
+| Network / Security      | #dee2e6                | #495057              |
+| Monitoring              | #d3f9d8                | #40c057              |
 
-## Sizing Rules
+### Status Colors (secondary use)
+| Meaning  | Stroke  | Fill    |
+|----------|---------|---------|
+| Error    | #e03131 | #ffc9c9 |
+| Success  | #2f9e44 | #b2f2bb |
+| Warning  | #e8590c | #ffd8a8 |
+| Info     | #1971c2 | #a5d8ff |
+| Neutral  | #868e96 | #e9ecef |
 
-- **Minimum shape size**: width >= 120px, height >= 60px
-- **Font sizes**: body text >= 16, titles/headers >= 20, small labels >= 14
-- **Padding**: leave at least 20px inside shapes for text breathing room
+> **Reserved**: \`#7C5CFC\` stroke + \`rgba(124,92,252,0.06)\` fill — Claude's own elements. Never use for diagram components.
+
+## Element Size Presets
+
+| Role                     | Width | Height | Notes                        |
+|--------------------------|-------|--------|------------------------------|
+| Zone / group background  | auto  | auto   | Fit children + 40px padding  |
+| Primary service          | 160   | 80     | Main components              |
+| Secondary component      | 120   | 60     | Helpers, utilities           |
+| Decision diamond         | 100   | 100    | Flowchart branch points      |
+| Start / end ellipse      | 120   | 60     | Flowchart terminals          |
+| Standalone title         | —     | —      | fontSize: 20, no shape       |
+| Standalone label         | —     | —      | fontSize: 16, no shape       |
+
+- **Font sizes**: body text >= 16, titles >= 20, small labels >= 14
+- **Padding**: >= 20px inside shapes for text breathing room
 - **Arrow length**: minimum 80px between connected shapes
-- **Consistent sizing**: keep same-role shapes identical dimensions
+- **Consistent sizing**: same-role shapes must have identical width/height
 
-## Layout Patterns
+## Clean Line Style (Professional Diagrams)
 
-- **Grid snap**: align to 20px grid for clean layouts
-- **Spacing**: 40–80px gap between adjacent shapes
-- **Flow direction**: top-to-bottom (vertical) or left-to-right (horizontal)
-- **Hierarchy**: important nodes larger or higher; left-to-right = temporal order
-- **Grouping**: cluster related elements visually; use background rectangles as zones
+For architecture and technical diagrams, set these on every element:
+- \`roughness: 0\` — removes hand-drawn wobble
+- \`roundness: { type: 3 }\` — smooth rounded corners on rectangles
+- \`fillStyle: "solid"\` — clean solid fills (not hachure/cross-hatch)
+- \`fontFamily: 2\` — Helvetica, clean sans-serif text
+- \`strokeWidth: 2\` — standard border weight
+
+For informal brainstorming, keep defaults (roughness: 1, fontFamily: 1 Virgil).
+
+## Grid Layout Templates
+
+All coordinates snap to a **20px grid**. Pick the template that matches your diagram type.
+
+### Vertical Flow (architecture, microservices, layered)
+- Columns at x: 100, 320, 540, 760, 980 (220px horizontal spacing)
+- Rows at y: 100, 240, 380, 520, 660, 800 (140px vertical spacing)
+- Primary shapes: 160×80 at grid intersections
+- Best for: service hierarchies, request flows, layered architecture
+
+### Horizontal Flow (data pipelines, CI/CD, timelines)
+- Stages at x: 100, 360, 620, 880, 1140 (260px horizontal spacing)
+- Baseline y: 200 (main pipeline row)
+- Secondary row: y: 60 (above) or y: 340 (below), 140px offset
+- Best for: sequential processing, build stages, temporal flows
+
+### Hub-and-Spoke (event-driven, message bus, central orchestrator)
+- Center hub at (500, 400)
+- 8 radial positions at 250px distance:
+  N(500,150) NE(677,223) E(750,400) SE(677,577)
+  S(500,650) SW(323,577) W(250,400) NW(323,223)
+- Best for: event bus, pub/sub, central router patterns
+
+### Diagram Type → Layout
+| Diagram Type     | Layout          |
+|------------------|-----------------|
+| Microservices    | Vertical Flow   |
+| Data Pipeline    | Horizontal Flow |
+| Event-Driven     | Hub-and-Spoke   |
+| CI/CD            | Horizontal Flow |
+| Layered Arch.    | Vertical Flow   |
+| Class / ER       | Grid (custom)   |
 
 ## Arrow Binding Best Practices
 
-- **Always bind**: use \`startElementId\` / \`endElementId\` to connect arrows to shapes
-- **Dashed arrows**: use \`strokeStyle: "dashed"\` for async, optional, or event flows
-- **Dotted arrows**: use \`strokeStyle: "dotted"\` for weak dependencies or annotations
-- **Arrowheads**: default "arrow" for directed flow; "dot" for data stores; null for lines
-- **Label arrows**: set \`text\` on arrows to describe the relationship (e.g., "HTTP", "publishes")
+- **Always bind**: use \`startElementId\` / \`endElementId\` — never place unbound arrows
+- **Clean arrows**: set \`roughness: 0\` on arrows for professional straight lines
+- **Dashed arrows**: \`strokeStyle: "dashed"\` for async, optional, or event flows
+- **Dotted arrows**: \`strokeStyle: "dotted"\` for weak dependencies or annotations
+- **Arrowheads**: "arrow" for directed flow, "dot" for data stores, null for lines
+- **Label arrows**: set \`text\` on arrows (e.g., "HTTP", "publishes", "reads", "gRPC")
+
+## Visual Grouping with Zones
+
+Group related components using background zone rectangles:
+- \`strokeStyle: "dashed"\`, \`strokeColor: "#868e96"\`, \`strokeWidth: 1\`
+- \`backgroundColor: "transparent"\` (or very light fill at \`opacity: 15\`)
+- Size: fit children + 40px padding on all sides
+- Label: standalone text element (fontSize: 16) at zone top-left corner + 10px offset
+- **Draw zones FIRST** (Drawing Order step 1) so they sit behind other elements
+
+## Complexity Tiers
+
+Plan before drawing:
+| Tier         | Elements | Strategy                                              |
+|--------------|----------|-------------------------------------------------------|
+| Simple       | 5–10     | Single flow direction, no zones needed                |
+| Medium       | 10–25    | Use zones, 2–3 color categories, one layout template  |
+| Complex      | 25–50    | Multiple zones, full semantic palette, sub-diagrams   |
+| Very Complex | 50+      | Split into overview diagram + focused detail diagrams |
 
 ## Diagram Type Templates
 
 ### Architecture Diagram
-- Shapes: 160×80 rectangles for services, 120×60 for small components
-- Colors: different fill per layer (frontend=blue, backend=purple, data=cyan)
-- Arrows: solid for sync calls, dashed for async/events
-- Zones: large light-gray background rectangles with 20px fontSize labels
+- Layout: Vertical Flow template
+- Shapes: 160×80, roundness: { type: 3 }, roughness: 0, fillStyle: "solid", fontFamily: 2
+- Colors: semantic palette — frontend blue, backend purple, database green, cache orange
+- Arrows: solid strokeStyle for sync, dashed for async/events, roughness: 0
+- Zones: dashed rectangles grouping each layer, transparent fill
+- Zone labels: standalone text, fontSize: 16
+
+### Microservices Diagram
+- Layout: Vertical Flow, 2–3 columns
+- Zones: "Frontend", "Backend Services", "Data Layer" as dashed group rectangles
+- Each service: 160×80, semantic color by type
+- Gateway/LB at top row, services in middle rows, databases at bottom
+- Arrows labeled with protocol (HTTP, gRPC, pub/sub)
+
+### Data Pipeline
+- Layout: Horizontal Flow
+- Stages: Source → Transform → Enrich → Load → Sink
+- Each stage: 160×80, semantic colors (external=red, processing=purple, storage=green)
+- Arrows labeled with data format (JSON, Parquet, Stream)
 
 ### Flowchart
 - Shapes: 140×70 rectangles for steps, 100×100 diamonds for decisions
-- Flow: top-to-bottom, 60px vertical spacing
-- Colors: green start, red end, blue for process steps
+- Flow: top-to-bottom, 140px vertical spacing
+- Colors: green fill start, red fill end, blue fill for process steps
 - Arrows: solid, with "Yes"/"No" labels from diamonds
 
 ### ER Diagram
 - Shapes: 180×40 per entity (wider for attribute lists)
-- Layout: 80px between entities
-- Arrows: use start/end arrowheads to show cardinality
-- Colors: light-blue fill for entities, no fill for junction tables
+- Layout: 80px between entities, grid arrangement
+- Arrows: use start/end arrowheads for cardinality
+- Colors: light-blue fill for entities, white for junction tables
+
+## Pre-Drawing Checklist
+
+Before calling batch_create_elements, verify your plan:
+1. Every arrow uses \`startElementId\`/\`endElementId\` (no unbound arrows)
+2. No two shapes overlap (check x/y/width/height)
+3. Same-role shapes have identical width and height
+4. Every shape has \`text\` (label)
+5. Colors match the semantic palette for each component type
+6. \`roughness: 0\` and \`fillStyle: "solid"\` set for professional diagrams
+7. All coordinates are multiples of 20 (grid-snapped)
+8. Zones drawn first, then shapes, then arrows
 
 ## Anti-Patterns to Avoid
 
@@ -370,18 +465,21 @@ const DIAGRAM_DESIGN_GUIDE = `# Excalidraw Diagram Design Guide
 2. **Cramped spacing** — minimum 40px between shapes
 3. **Tiny fonts** — never below 14px; prefer 16+
 4. **Manual arrow coordinates** — always use startElementId/endElementId binding
-5. **Too many colors** — limit to 3–4 fill colors per diagram
-6. **Inconsistent sizes** — same-role shapes should be same width/height
+5. **Too many colors** — limit to 3–5 semantic fill colors per diagram
+6. **Inconsistent sizes** — same-role shapes must be same width/height
 7. **No labels** — every shape and meaningful arrow should have text
 8. **Flat layouts** — use zones/groups to create visual hierarchy
+9. **Sketchy style on technical diagrams** — use roughness: 0 for architecture
+10. **Generic colors** — always pick from the semantic palette by component type
 
 ## Drawing Order (Recommended)
 
-1. **Background zones** — large rectangles with light fill, low opacity
-2. **Primary shapes** — services, entities, steps (with labels via \`text\`)
-3. **Arrows** — connect shapes using binding IDs
-4. **Annotations** — standalone text elements for notes, titles
-5. **Refinement** — align, distribute, adjust spacing, screenshot to verify
+1. **Background zones** — dashed rectangles with transparent fill, drawn first
+2. **Zone labels** — standalone text at top-left of each zone
+3. **Primary shapes** — services, entities, steps (with text, semantic colors, clean style)
+4. **Arrows** — connect shapes using binding IDs, label with protocol/relationship
+5. **Annotations** — standalone text elements for titles, notes
+6. **Refinement** — align_elements, distribute_elements, get_canvas_screenshot to verify
 `;
 
 // Tool definitions
@@ -413,7 +511,9 @@ const tools: Tool[] = [
         startElementId: { type: 'string', description: 'For arrows: ID of the element to bind the arrow start to. Arrow auto-routes to element edge.' },
         endElementId: { type: 'string', description: 'For arrows: ID of the element to bind the arrow end to. Arrow auto-routes to element edge.' },
         endArrowhead: { type: 'string', description: 'Arrowhead style at end: arrow, bar, dot, triangle, or null' },
-        startArrowhead: { type: 'string', description: 'Arrowhead style at start: arrow, bar, dot, triangle, or null' }
+        startArrowhead: { type: 'string', description: 'Arrowhead style at start: arrow, bar, dot, triangle, or null' },
+        fillStyle: { type: 'string', description: 'Fill pattern: solid, hachure, cross-hatch. Use "solid" for clean professional diagrams.' },
+        roundness: { type: 'object', description: 'Corner rounding: { type: 3 } for smooth rounded corners on rectangles, null for sharp corners', properties: { type: { type: 'number' } }, nullable: true }
       },
       required: ['type', 'x', 'y']
     }
@@ -441,7 +541,9 @@ const tools: Tool[] = [
         opacity: { type: 'number' },
         text: { type: 'string' },
         fontSize: { type: 'number' },
-        fontFamily: { type: ['string', 'number'], description: 'Font family: virgil/hand/handwritten (1), helvetica/sans/sans-serif (2), cascadia/mono/monospace (3), excalifont (5), nunito (6), lilita/lilita one (7), comic shanns/comic (8), or numeric ID' }
+        fontFamily: { type: ['string', 'number'], description: 'Font family: virgil/hand/handwritten (1), helvetica/sans/sans-serif (2), cascadia/mono/monospace (3), excalifont (5), nunito (6), lilita/lilita one (7), comic shanns/comic (8), or numeric ID' },
+        fillStyle: { type: 'string', description: 'Fill pattern: solid, hachure, cross-hatch. Use "solid" for clean professional diagrams.' },
+        roundness: { type: 'object', description: 'Corner rounding: { type: 3 } for smooth rounded corners on rectangles, null for sharp corners', properties: { type: { type: 'number' } }, nullable: true }
       },
       required: ['id']
     }
@@ -644,7 +746,9 @@ const tools: Tool[] = [
               startElementId: { type: 'string', description: 'For arrows: ID of element to bind arrow start to' },
               endElementId: { type: 'string', description: 'For arrows: ID of element to bind arrow end to' },
               endArrowhead: { type: 'string', description: 'Arrowhead style at end: arrow, bar, dot, triangle, or null' },
-              startArrowhead: { type: 'string', description: 'Arrowhead style at start: arrow, bar, dot, triangle, or null' }
+              startArrowhead: { type: 'string', description: 'Arrowhead style at start: arrow, bar, dot, triangle, or null' },
+              fillStyle: { type: 'string', description: 'Fill pattern: solid, hachure, cross-hatch. Use "solid" for clean professional diagrams.' },
+              roundness: { type: 'object', description: 'Corner rounding: { type: 3 } for smooth rounded corners on rectangles, null for sharp corners', properties: { type: { type: 'number' } }, nullable: true }
             },
             required: ['type', 'x', 'y']
           }

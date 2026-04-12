@@ -77,6 +77,12 @@ chiamata tool.
   tue aggiunte. Lascia colori neutri (stroke `#1e1e1e`) per gli elementi
   dell'umano.
 
+- **Qualità visiva.** Prima di disegnare un diagramma complesso, chiama
+  `read_diagram_guide` per caricare la palette semantica e i template di
+  layout. Usa `roughness: 0`, `fillStyle: "solid"`, `fontFamily: 2` e
+  `roundness: { type: 3 }` per diagrammi tecnici professionali. Scegli i
+  colori dalla tabella semantica (Frontend=blu, Backend=viola, DB=verde, ecc.).
+
 - **Token efficiency.** Usa `describe_scene` come default (testo compatto).
   `get_canvas_screenshot` solo quando serve davvero il layout visivo.
 
