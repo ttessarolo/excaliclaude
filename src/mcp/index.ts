@@ -2333,11 +2333,17 @@ async function runServer(): Promise<void> {
           const rawBody = Buffer.concat(chunks).toString();
           const body = JSON.parse(rawBody);
 
-          // Log the JSON-RPC method(s) being called
+          // Log the JSON-RPC method(s) being called — include tool name for tools/call
           if (Array.isArray(body)) {
-            httpLog(`POST batch: ${body.map((m: any) => m.method || `response:${m.id}`).join(', ')}`);
+            httpLog(`POST batch: ${body.map((m: any) => {
+              if (m.method === 'tools/call') return `tools/call:${m.params?.name}`;
+              return m.method || `response:${m.id}`;
+            }).join(', ')}`);
           } else {
-            httpLog(`POST ${body.method || `response:${body.id}`}`, { id: body.id });
+            const methodLabel = body.method === 'tools/call'
+              ? `tools/call:${body.params?.name}`
+              : (body.method || `response:${body.id}`);
+            httpLog(`POST ${methodLabel}`, { id: body.id });
           }
 
           if (sessionId && httpSessions.has(sessionId)) {
