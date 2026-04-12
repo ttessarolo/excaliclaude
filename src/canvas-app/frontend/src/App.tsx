@@ -52,6 +52,8 @@ interface ServerElement {
   start?: { id: string };
   end?: { id: string };
   strokeStyle?: string;
+  fillStyle?: string;
+  roundness?: { type: number; value?: number } | null;
   endArrowhead?: string;
   startArrowhead?: string;
   // Image element fields
@@ -209,7 +211,7 @@ const normalizeImageElement = (element: Partial<ExcalidrawElement>): Partial<Exc
     roughness: img.roughness ?? 0,
     opacity: img.opacity ?? 100,
     groupIds: img.groupIds || [],
-    roundness: null,
+    roundness: img.roundness ?? null,
     seed: img.seed || Math.floor(Math.random() * 1000000),
     version: img.version || 1,
     versionNonce: img.versionNonce || Math.floor(Math.random() * 1000000),
@@ -250,6 +252,13 @@ const restoreBindings = (
     }
     if (orig.elbowed !== undefined && el.elbowed === undefined) {
       patched.elbowed = orig.elbowed;
+    }
+    // Preserve styling properties that convertToExcalidrawElements may drop
+    if (orig.fillStyle && el.fillStyle !== orig.fillStyle) {
+      patched.fillStyle = orig.fillStyle;
+    }
+    if (orig.roundness !== undefined && el.roundness !== orig.roundness) {
+      patched.roundness = orig.roundness;
     }
 
     return patched;
