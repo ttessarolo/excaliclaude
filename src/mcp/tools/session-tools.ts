@@ -173,6 +173,37 @@ function resolveBaseUrlOrError(
   }
 }
 
+/** MCP extra context passed by the SDK request handler (optional). */
+type McpExtra = {
+  sendNotification?: (notification: any) => Promise<void>;
+  [key: string]: any;
+};
+
+/**
+ * Send a progress notification to keep the MCP connection alive during
+ * long-running waits. Best-effort: silently ignored if the client didn't
+ * provide a progressToken or if sending fails.
+ */
+async function sendProgressKeepalive(
+  extra: McpExtra | undefined,
+  progressToken: string | number | undefined,
+  tick: number,
+): Promise<void> {
+  if (!extra?.sendNotification || progressToken == null) return;
+  try {
+    await extra.sendNotification({
+      method: 'notifications/progress',
+      params: {
+        progressToken,
+        progress: tick,
+        message: 'In attesa del segnale umano sul canvas...',
+      },
+    });
+  } catch {
+    // best-effort — non bloccare il loop
+  }
+}
+
 /**
  * Dispatcher per i tool ExcaliClaude. Ritorna `null` se il tool non appartiene
  * alla suite session-tools (così il chiamante può proseguire la risoluzione o
@@ -181,6 +212,7 @@ function resolveBaseUrlOrError(
 export async function registerSessionToolsLegacy(
   name: string,
   args: any,
+  extra?: McpExtra,
 ): Promise<ToolResult | null> {
   const a = args || {};
   switch (name) {
@@ -222,10 +254,21 @@ export async function registerSessionToolsLegacy(
     }
 
     case 'wait_for_human': {
-      const timeoutMs = a.timeout_ms ?? 300_000;
+      // Keepalive polling: instead of a single long HTTP request that
+      // Claude Desktop would kill after ~4 minutes, we poll in short
+      // intervals and send MCP progress notifications between each
+      // iteration so the client knows we're still alive.
+      const POLL_INTERVAL_MS = 55_000; // well under Claude Desktop's ~4min timeout
       const resolved = resolveBaseUrlOrError(a.session_id);
       if (resolved.error) return resolved.error;
       const baseUrl = resolved.url;
+
+      // Extract progressToken from the MCP request metadata (if the client
+      // sent one). We use it to send keepalive progress notifications.
+      const progressToken: string | number | undefined =
+        (extra as any)?._meta?.progressToken ??
+        (extra as any)?.requestInfo?._meta?.progressToken;
+
       try {
         // Send optional message to sidebar before waiting
         if (a.message) {
@@ -239,30 +282,43 @@ export async function registerSessionToolsLegacy(
             }),
           }).catch(() => {}); // best-effort, don't block wait
         }
-        const res = await fetch(`${baseUrl}/api/claude/wait-for-signal`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ timeout_ms: timeoutMs }),
-          signal: AbortSignal.timeout(timeoutMs + 5000),
-        });
-        const result: any = await res.json();
-        const content: ToolResult['content'] = [];
-        if (result.signal_type === 'window_closed' || result.signal_type === 'shutdown') {
-          return {
-            content: [
-              {
-                type: 'text',
-                text:
-                  'La finestra del canvas è stata chiusa. La sessione è ' +
-                  'terminata. Usa `open_canvas` per riaprire un nuovo canvas ' +
-                  'quando vuoi continuare.',
-              },
-            ],
-          };
-        }
-        if (result.signal_type === 'timeout') {
-          content.push({ type: 'text', text: 'Timeout: l\'umano non ha segnalato.' });
-        } else {
+
+        let tick = 0;
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          const res = await fetch(`${baseUrl}/api/claude/wait-for-signal`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ timeout_ms: POLL_INTERVAL_MS }),
+            signal: AbortSignal.timeout(POLL_INTERVAL_MS + 5000),
+          });
+          const result: any = await res.json();
+
+          // ── Terminal signals — return immediately ──
+          if (result.signal_type === 'window_closed' || result.signal_type === 'shutdown') {
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text:
+                    'La finestra del canvas è stata chiusa. La sessione è ' +
+                    'terminata. Usa `open_canvas` per riaprire un nuovo canvas ' +
+                    'quando vuoi continuare.',
+                },
+              ],
+            };
+          }
+
+          // ── Timeout from canvas server — no signal yet, loop again ──
+          if (result.signal_type === 'timeout') {
+            tick++;
+            logger.info(`[wait_for_human] keepalive tick ${tick} — still waiting`);
+            await sendProgressKeepalive(extra, progressToken, tick);
+            continue;
+          }
+
+          // ── Real signal received — build response ──
+          const content: ToolResult['content'] = [];
           if (result.message) {
             content.push({ type: 'text', text: `Messaggio dall'umano: ${result.message}` });
           }
@@ -295,8 +351,8 @@ export async function registerSessionToolsLegacy(
               mimeType: 'image/png',
             });
           }
+          return { content };
         }
-        return { content };
       } catch (err) {
         const msg = (err as Error).message || '';
         const isConnErr = /fetch failed|ECONNREFUSED|ECONNRESET|network|connect/i.test(msg);

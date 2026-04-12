@@ -1004,7 +1004,7 @@ function pingToolActivity(tool: string, phase: 'start' | 'end', args?: any): voi
 }
 
 // Tool call handler — shared by both stdio and HTTP servers
-async function callToolHandler(request: CallToolRequest) {
+async function callToolHandler(request: CallToolRequest, extra?: any) {
   const { name, arguments: args } = request.params;
   logger.info(`Handling tool call: ${name}`);
   pingToolActivity(name, 'start', args);
@@ -2364,7 +2364,7 @@ async function callToolHandler(request: CallToolRequest) {
         // Delegate to ExcaliClaude session-tools handler (open_canvas, close_canvas,
         // list_sessions, wait_for_human, save_session, send_message_to_canvas,
         // annotate, get_human_changes).
-        const sessionResult = await registerSessionToolsLegacy(name, args);
+        const sessionResult = await registerSessionToolsLegacy(name, args, extra);
         if (sessionResult !== null) return sessionResult;
         throw new Error(`Unknown tool: ${name}`);
       }
