@@ -1,5 +1,5 @@
 ---
-name: excaliclaude
+name: excalicl4ude
 description: >
   Sessione interattiva su canvas Excalidraw bidirezionale. Usa questa skill
   quando l'utente vuole discutere visivamente di un'idea, fare brainstorming
@@ -27,26 +27,37 @@ Leggi `references/interaction-protocol.md` per il protocollo completo e
    `open_canvas` con un titolo descrittivo. Si apre una finestra nativa con
    Excalidraw + la sidebar Claude integrata.
 
-2. **Annuncio** — Subito dopo l'apertura, usa `send_message_to_canvas` per
-   presentare la sessione e istruire l'umano su come segnalarti.
+2. **Annuncio + Attesa** — Subito dopo l'apertura, usa `wait_for_human`
+   con il parametro `message` per presentare la sessione E attendere il
+   segnale in una singola chiamata. Esempio:
+   ```
+   wait_for_human({ message: "Canvas pronto! Disegna la tua idea, poi
+   clicca '👀 Claude, guarda!' quando vuoi il mio feedback." })
+   ```
+   Il tool è **bloccante** (long-poll) e ritorna con summary del canvas +
+   eventuale messaggio dell'umano.
 
-3. **Attesa turno** — Dopo ogni tuo intervento, usa `wait_for_human` per
-   aspettare che l'utente finisca e clicchi "👀 Claude, guarda!". Il tool è
-   **bloccante** (long-poll) e ritorna con summary del canvas + eventuale
-   messaggio dell'umano.
-
-4. **Analisi** — Quando ricevi il segnale, analizza lo stato del canvas
+3. **Analisi** — Quando ricevi il segnale, analizza lo stato del canvas
    dalla risposta di `wait_for_human` (summary testuale, eventuale
    screenshot, `changed_elements`).
 
-5. **Risposta** — Rispondi sia testualmente (`send_message_to_canvas`) sia
-   visivamente (`batch_create_elements`, `annotate`, `update_element`).
-   **Comunica prima di agire**: spiega cosa stai per fare.
+4. **Risposta + Attesa** — Agisci visivamente (`batch_create_elements`,
+   `annotate`, `update_element`), poi **termina SEMPRE** con
+   `wait_for_human` con `message` che spiega cosa hai fatto. Esempio:
+   ```
+   wait_for_human({ message: "Ho aggiunto il diagramma dell'architettura.
+   Dimmi se vuoi modifiche!" })
+   ```
 
-6. **Iterazione** — Torna al punto 3 fino a conclusione.
+5. **Iterazione** — Torna al punto 3 fino a conclusione.
 
-7. **Salvataggio** — Alla fine, usa `save_session` per salvare il file
+6. **Salvataggio** — Alla fine, usa `save_session` per salvare il file
    `.excalidraw` nella directory del progetto.
+
+**IMPORTANTE**: usa SEMPRE `wait_for_human` con `message` come ultimo
+tool del turno. Non usare `send_message_to_canvas` separatamente — il
+parametro `message` di `wait_for_human` lo sostituisce, risparmiando una
+chiamata tool.
 
 ## Regole Importanti
 
@@ -54,8 +65,9 @@ Leggi `references/interaction-protocol.md` per il protocollo completo e
   prima di agire, a meno che non ti venga esplicitamente chiesto di
   procedere in autonomia.
 
-- **Comunica prima di agire.** Usa `send_message_to_canvas` per dire cosa
-  stai per fare, poi fallo. L'umano deve sapere perché il canvas cambia.
+- **Comunica prima di agire.** Usa il parametro `message` di
+  `wait_for_human` per spiegare cosa hai fatto o cosa farai. L'umano deve
+  sapere perché il canvas cambia.
 
 - **Annotazioni, non sovrascritture.** Usa `annotate` con
   `target_element_id` per commentare il lavoro dell'umano senza sovrascriverlo.
@@ -73,16 +85,15 @@ Leggi `references/interaction-protocol.md` per il protocollo completo e
 
 ## Tool di Sessione ExcaliClaude
 
-| Tool | Quando usarlo |
-|---|---|
-| `open_canvas` | Inizio sessione |
-| `wait_for_human` | Dopo ogni tuo intervento, aspetta il segnale |
-| `send_message_to_canvas` | Comunicare nella sidebar Claude |
-| `annotate` | Commentare un elemento specifico dell'umano |
-| `save_session` | Salvare come file `.excalidraw` |
-| `get_human_changes` | Vedere cosa ha modificato l'umano |
-| `list_sessions` | Se ci sono più canvas aperti |
-| `close_canvas` | Fine sessione (con `save: true`) |
+| Tool                     | Quando usarlo                                |
+| ------------------------ | -------------------------------------------- |
+| `open_canvas`            | Inizio sessione                              |
+| `wait_for_human`         | **SEMPRE come ultimo tool del turno** — con `message` per comunicare nella sidebar + attendere il segnale |
+| `annotate`               | Commentare un elemento specifico dell'umano  |
+| `save_session`           | Salvare come file `.excalidraw`              |
+| `get_human_changes`      | Vedere cosa ha modificato l'umano            |
+| `list_sessions`          | Se ci sono più canvas aperti                 |
+| `close_canvas`           | Fine sessione (con `save: true`)             |
 
 ## Tool Excalidraw (dal fork upstream)
 

@@ -11,18 +11,17 @@ su un canvas Excalidraw condiviso.
 
 ```
 1. open_canvas({ title: "<titolo contestuale>", blank: true })
-2. send_message_to_canvas({
+2. wait_for_human({
      message: "Canvas pronto! Disegna la tua idea e clicca
-               '👀 Claude, guarda!' quando vuoi il mio feedback.",
-     type: "info"
-   })
-3. wait_for_human()                              ← long-poll bloccante
-4. Analizza il canvas dalla risposta (canvas_summary + screenshot se
+               '👀 Claude, guarda!' quando vuoi il mio feedback."
+   })                                            ← messaggio + long-poll
+3. Analizza il canvas dalla risposta (canvas_summary + screenshot se
    disponibile)
-5. Rispondi con send_message_to_canvas + azioni visive
-   (batch_create_elements / annotate / update_element)
-6. wait_for_human()                              ← attendi feedback
-7. Itera
+4. Azioni visive (batch_create_elements / annotate / update_element)
+5. wait_for_human({
+     message: "Ecco il mio feedback. Dimmi se vuoi modifiche!"
+   })                                            ← messaggio + attendi
+6. Itera dal punto 3
 ```
 
 ### Scenario B — Claude disegna un'architettura da codice
@@ -33,21 +32,15 @@ il flusso di X"
 ```
 1. Analizza il codebase con i tool standard (Read, Grep, Glob)
 2. open_canvas({ title: "Architettura <progetto>" })
-3. send_message_to_canvas({
-     message: "Sto analizzando il codice, poi disegnerò l'architettura.",
-     type: "info"
-   })
-4. batch_create_elements con i blocchi architetturali
+3. batch_create_elements con i blocchi architetturali
    (usa layout gerarchico top→bottom o left→right)
-5. annotate su ciascun blocco con spiegazioni
-6. send_message_to_canvas({
-     message: "Ecco la mia analisi. Modifica quello che non torna e clicca
-               '👀 Claude, guarda!' quando vuoi che riveda.",
-     type: "info"
+4. annotate su ciascun blocco con spiegazioni
+5. wait_for_human({
+     message: "Ecco la mia analisi dell'architettura. Modifica quello che
+               non torna e clicca '👀 Claude, guarda!' quando vuoi che riveda."
    })
-7. wait_for_human()
-8. get_human_changes()  ← vedi solo le modifiche dell'umano
-9. Itera
+6. get_human_changes()  ← vedi solo le modifiche dell'umano
+7. Itera
 ```
 
 ### Scenario C — Sessione continuativa
@@ -61,11 +54,9 @@ il flusso di X"
      save_path: "<path>.excalidraw"
    })
 2. describe_scene()  ← capisci dove eravate
-3. send_message_to_canvas({
-     message: "Ho ricaricato la sessione. Da dove vuoi continuare?",
-     type: "info"
+3. wait_for_human({
+     message: "Ho ricaricato la sessione. Da dove vuoi continuare?"
    })
-4. wait_for_human()
 ```
 
 ### Scenario D — Discussione di un diagramma Mermaid esistente
@@ -110,13 +101,14 @@ Il canvas può diventare grande. Strategie:
 
 ## Turn-Taking Rules
 
-1. **Un tool per turno di attesa** — dopo aver modificato il canvas, chiama
-   **sempre** `wait_for_human` prima di fare altre modifiche. Mai burst di
-   modifiche senza attesa, a meno che l'umano non lo chieda esplicitamente.
+1. **`wait_for_human` come ultimo tool** — dopo aver modificato il canvas,
+   chiama **sempre** `wait_for_human` con `message` come ultimo tool del
+   turno. Mai burst di modifiche senza attesa, a meno che l'umano non lo
+   chieda esplicitamente.
 
-2. **Messaggio prima dell'azione** — usa `send_message_to_canvas` per
-   annunciare cosa stai per fare, così l'umano vede l'intenzione prima del
-   risultato.
+2. **Messaggio nel wait** — usa il parametro `message` di `wait_for_human`
+   per spiegare cosa hai fatto, così l'umano vede il contesto prima di
+   rispondere. Non usare `send_message_to_canvas` separatamente.
 
 3. **Rispetta il lavoro esistente** — non eliminare elementi dell'umano
    senza chiedere. Usa `annotate` per commentarli.

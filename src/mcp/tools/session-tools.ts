@@ -61,12 +61,19 @@ export const SESSION_TOOL_DEFINITIONS: Array<{
   {
     name: 'wait_for_human',
     description:
-      'Tool BLOCCANTE: aspetta che l\'umano segnali "Claude, guarda!" dalla sidebar del canvas. Ritorna lo stato del canvas e un eventuale messaggio. Usare dopo ogni intervento di Claude.',
+      'Tool BLOCCANTE: invia un messaggio opzionale alla sidebar del canvas, poi aspetta che l\'umano segnali "Claude, guarda!". Ritorna lo stato del canvas e un eventuale messaggio. Usare dopo ogni intervento di Claude.',
     inputSchema: {
       type: 'object',
       properties: {
         session_id: { type: 'string' },
         timeout_ms: { type: 'number', description: 'Timeout in millisecondi', default: 300000 },
+        message: { type: 'string', description: 'Messaggio da mostrare nella sidebar prima di attendere (opzionale)' },
+        message_type: {
+          type: 'string',
+          enum: ['info', 'question', 'suggestion', 'action'],
+          default: 'info',
+          description: 'Tipo del messaggio (opzionale)',
+        },
       },
     },
   },
@@ -220,6 +227,18 @@ export async function registerSessionToolsLegacy(
       if (resolved.error) return resolved.error;
       const baseUrl = resolved.url;
       try {
+        // Send optional message to sidebar before waiting
+        if (a.message) {
+          await fetch(`${baseUrl}/api/claude/message`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              message: a.message,
+              type: a.message_type || 'info',
+              timestamp: new Date().toISOString(),
+            }),
+          }).catch(() => {}); // best-effort, don't block wait
+        }
         const res = await fetch(`${baseUrl}/api/claude/wait-for-signal`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
