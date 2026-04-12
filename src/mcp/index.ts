@@ -7,8 +7,11 @@ process.env.NO_COLOR = '1';
 import { fileURLToPath } from "url";
 import { deflateSync } from 'zlib';
 import { webcrypto } from 'crypto';
+import { createServer as createHttpServer } from 'node:http';
+import { randomUUID } from 'node:crypto';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { 
   CallToolRequestSchema, 
   ListToolsRequestSchema,
@@ -32,6 +35,15 @@ import fetch from 'node-fetch';
 
 // Load environment variables
 dotenv.config();
+
+// CLI flags
+const HTTP_ONLY = process.argv.includes('--http-only');
+const portFlagIdx = process.argv.indexOf('--port');
+const MCP_HTTP_PORT = Number(
+  (portFlagIdx !== -1 && process.argv[portFlagIdx + 1]) ||
+  process.env.MCP_HTTP_PORT ||
+  '3200'
+);
 
 // Safe file path validation to prevent path traversal attacks
 const ALLOWED_EXPORT_DIR = process.env.EXCALIDRAW_EXPORT_DIR || process.cwd();
@@ -832,22 +844,27 @@ const tools: Tool[] = [
   }
 ];
 
-// Initialize MCP server
-const server = new Server(
-  {
-    name: "mcp-excalidraw-server",
-    version: "2.0.0",
-    description: "Programmatic canvas toolkit for Excalidraw with file I/O, image export, and real-time sync"
-  },
-  {
-    capabilities: {
-      tools: Object.fromEntries(tools.map(tool => [tool.name, {
-        description: tool.description,
-        inputSchema: tool.inputSchema
-      }]))
+// MCP server factory — SDK constraint: one Server per transport
+function createMcpServer(): Server {
+  return new Server(
+    {
+      name: "mcp-excalidraw-server",
+      version: "2.0.0",
+      description: "Programmatic canvas toolkit for Excalidraw with file I/O, image export, and real-time sync"
+    },
+    {
+      capabilities: {
+        tools: Object.fromEntries(tools.map(tool => [tool.name, {
+          description: tool.description,
+          inputSchema: tool.inputSchema
+        }]))
+      }
     }
-  }
-);
+  );
+}
+
+const stdioServer = createMcpServer();
+const httpMcpServer = createMcpServer();
 
 // Helper function to convert text property to label format for Excalidraw
 function convertTextToLabel(element: ServerElement): ServerElement {
@@ -883,8 +900,8 @@ function pingToolActivity(tool: string, phase: 'start' | 'end', args?: any): voi
   }
 }
 
-// Set up request handler for tool calls
-server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest) => {
+// Tool call handler — shared by both stdio and HTTP servers
+async function callToolHandler(request: CallToolRequest) {
   const { name, arguments: args } = request.params;
   logger.info(`Handling tool call: ${name}`);
   pingToolActivity(name, 'start', args);
@@ -2258,28 +2275,82 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
   } finally {
     pingToolActivity(name, 'end');
   }
-});
+}
 
-// Set up request handler for listing available tools
-server.setRequestHandler(ListToolsRequestSchema, async () => {
+// List tools handler — shared by both stdio and HTTP servers
+async function listToolsHandler() {
   logger.info('Listing available tools');
-  // Merge legacy tools with ExcaliClaude session-tools
   const allTools = [...tools, ...SESSION_TOOL_DEFINITIONS];
   return { tools: allTools };
-});
+}
 
-// Start server
+// Register handlers on both server instances
+function registerHandlers(s: Server): void {
+  s.setRequestHandler(CallToolRequestSchema, callToolHandler);
+  s.setRequestHandler(ListToolsRequestSchema, listToolsHandler);
+}
+registerHandlers(stdioServer);
+registerHandlers(httpMcpServer);
+
+// Start server — stdio + HTTP (default) or HTTP-only (--http-only)
 async function runServer(): Promise<void> {
   try {
     logger.info('Starting Excalidraw MCP server...');
 
-    const transport = new StdioServerTransport();
-    logger.debug('Connecting to stdio transport...');
+    // --- HTTP transport (always starts) ---
+    const httpTransport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: () => randomUUID(),
+    });
 
-    await server.connect(transport);
-    logger.info('Excalidraw MCP server running on stdio');
+    const nodeHttpServer = createHttpServer(async (req, res) => {
+      // CORS
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, mcp-session-id');
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204).end();
+        return;
+      }
 
-    process.stdin.resume();
+      const url = new URL(req.url || '/', `http://localhost:${MCP_HTTP_PORT}`);
+      if (url.pathname !== '/mcp') {
+        res.writeHead(404).end('Not found');
+        return;
+      }
+
+      try {
+        if (req.method === 'POST') {
+          const chunks: Buffer[] = [];
+          for await (const chunk of req) chunks.push(chunk as Buffer);
+          const body = JSON.parse(Buffer.concat(chunks).toString());
+          await httpTransport.handleRequest(req, res, body);
+        } else {
+          // GET (SSE) and DELETE
+          await httpTransport.handleRequest(req, res);
+        }
+      } catch (err) {
+        logger.error('HTTP transport error:', err);
+        if (!res.headersSent) {
+          res.writeHead(500).end('Internal server error');
+        }
+      }
+    });
+
+    await httpMcpServer.connect(httpTransport);
+    nodeHttpServer.listen(MCP_HTTP_PORT, () => {
+      logger.info(`HTTP MCP transport listening on port ${MCP_HTTP_PORT}`);
+      process.stderr.write(`ExcaliClaude HTTP MCP: http://localhost:${MCP_HTTP_PORT}/mcp\n`);
+    });
+
+    // --- stdio transport (unless --http-only) ---
+    if (!HTTP_ONLY) {
+      const stdioTransport = new StdioServerTransport();
+      await stdioServer.connect(stdioTransport);
+      logger.info('Excalidraw MCP server running on stdio + HTTP');
+      process.stdin.resume();
+    } else {
+      logger.info('Excalidraw MCP server running on HTTP only (--http-only)');
+    }
   } catch (error) {
     logger.error('Error starting server:', error);
     process.stderr.write(`Failed to start MCP server: ${(error as Error).message}\n${(error as Error).stack}\n`);
@@ -2287,10 +2358,12 @@ async function runServer(): Promise<void> {
   }
 }
 
-// Graceful shutdown — close all canvas sessions before exiting
+// Graceful shutdown — close all canvas sessions and both servers before exiting
 async function shutdown(code: number = 0): Promise<void> {
   try {
     await sessionManager.cleanup();
+    await stdioServer.close().catch(() => {});
+    await httpMcpServer.close().catch(() => {});
   } catch (err) {
     logger.warn(`Cleanup error: ${err}`);
   }
