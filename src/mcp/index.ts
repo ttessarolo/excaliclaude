@@ -2300,34 +2300,54 @@ async function runServer(): Promise<void> {
 
     // --- HTTP transport (always starts) ---
     const nodeHttpServer = createHttpServer(async (req, res) => {
+      const httpLog = (msg: string, data?: any) => {
+        const line = `[HTTP] ${msg}${data ? ' ' + JSON.stringify(data) : ''}`;
+        logger.info(line);
+        process.stderr.write(line + '\n');
+      };
+
       // CORS
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
       res.setHeader('Access-Control-Allow-Headers', 'Content-Type, mcp-session-id');
       if (req.method === 'OPTIONS') {
+        httpLog('OPTIONS preflight');
         res.writeHead(204).end();
         return;
       }
 
       const url = new URL(req.url || '/', `http://localhost:${MCP_HTTP_PORT}`);
       if (url.pathname !== '/mcp') {
+        httpLog(`404 non-MCP path: ${url.pathname}`);
         res.writeHead(404).end('Not found');
         return;
       }
 
       const sessionId = req.headers['mcp-session-id'] as string | undefined;
+      httpLog(`${req.method} /mcp`, { sessionId: sessionId || '(none)', activeSessions: httpSessions.size });
 
       try {
         if (req.method === 'POST') {
           const chunks: Buffer[] = [];
           for await (const chunk of req) chunks.push(chunk as Buffer);
-          const body = JSON.parse(Buffer.concat(chunks).toString());
+          const rawBody = Buffer.concat(chunks).toString();
+          const body = JSON.parse(rawBody);
+
+          // Log the JSON-RPC method(s) being called
+          if (Array.isArray(body)) {
+            httpLog(`POST batch: ${body.map((m: any) => m.method || `response:${m.id}`).join(', ')}`);
+          } else {
+            httpLog(`POST ${body.method || `response:${body.id}`}`, { id: body.id });
+          }
 
           if (sessionId && httpSessions.has(sessionId)) {
             // Existing session
+            httpLog(`Routing to existing session ${sessionId}`);
             await httpSessions.get(sessionId)!.transport.handleRequest(req, res, body);
+            httpLog(`Response sent for session ${sessionId}`);
           } else if (!sessionId) {
             // New session — create fresh Server + Transport pair
+            httpLog('Creating new session (no session ID in request)');
             const transport = new StreamableHTTPServerTransport({
               sessionIdGenerator: () => randomUUID(),
             });
@@ -2336,38 +2356,59 @@ async function runServer(): Promise<void> {
 
             transport.onclose = () => {
               const sid = transport.sessionId;
+              httpLog(`Session transport closed: ${sid}`);
               if (sid) {
                 httpSessions.delete(sid);
-                logger.info(`HTTP session ${sid} closed`);
               }
               // Break the cycle: server.close() → transport.close() → onclose
               transport.onclose = undefined;
               server.close().catch(() => {});
             };
 
+            transport.onerror = (err: Error) => {
+              httpLog(`Session transport error: ${err.message}`);
+            };
+
             await server.connect(transport);
+            httpLog(`Server connected, handling initial request`);
             await transport.handleRequest(req, res, body);
+            httpLog(`Initial request handled, sessionId: ${transport.sessionId}`);
 
             if (transport.sessionId) {
               httpSessions.set(transport.sessionId, { server, transport });
-              logger.info(`New HTTP session: ${transport.sessionId}`);
+              httpLog(`Session registered: ${transport.sessionId}`);
             }
           } else {
             // Unknown session ID
+            httpLog(`Unknown session ID: ${sessionId} (known: ${[...httpSessions.keys()].join(', ')})`);
             res.writeHead(404).end(JSON.stringify({
               jsonrpc: '2.0',
               error: { code: -32000, message: 'Session not found' },
               id: null,
             }));
           }
-        } else if (sessionId && httpSessions.has(sessionId)) {
-          // GET (SSE) and DELETE for existing sessions
-          await httpSessions.get(sessionId)!.transport.handleRequest(req, res);
+        } else if (req.method === 'GET') {
+          httpLog(`GET SSE stream request`, { sessionId });
+          if (sessionId && httpSessions.has(sessionId)) {
+            await httpSessions.get(sessionId)!.transport.handleRequest(req, res);
+            httpLog(`SSE stream established for ${sessionId}`);
+          } else {
+            httpLog(`GET rejected: missing/invalid session`);
+            res.writeHead(400).end('Missing or invalid mcp-session-id');
+          }
+        } else if (req.method === 'DELETE') {
+          httpLog(`DELETE session request`, { sessionId });
+          if (sessionId && httpSessions.has(sessionId)) {
+            await httpSessions.get(sessionId)!.transport.handleRequest(req, res);
+          } else {
+            res.writeHead(400).end('Missing or invalid mcp-session-id');
+          }
         } else {
-          res.writeHead(400).end('Missing or invalid mcp-session-id');
+          httpLog(`Unexpected method: ${req.method}`);
+          res.writeHead(405).end('Method not allowed');
         }
       } catch (err) {
-        logger.error('HTTP transport error:', err);
+        httpLog(`ERROR: ${(err as Error).message}`, { stack: (err as Error).stack?.split('\n').slice(0, 3) });
         if (!res.headersSent) {
           res.writeHead(500).end('Internal server error');
         }
