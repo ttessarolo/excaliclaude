@@ -1,34 +1,30 @@
 # ExcaliClaude
 
-Plugin per [Claude Code](https://docs.claude.com/claude-code) che abilita
-sessioni di collaborazione visiva bidirezionale **umano ↔ Claude** su un
-canvas [Excalidraw](https://excalidraw.com) live.
+A [Claude Code](https://docs.claude.com/claude-code) plugin that enables **bidirectional visual collaboration** between humans and Claude on a live [Excalidraw](https://excalidraw.com) canvas.
 
-Claude apre una finestra nativa con Excalidraw + una sidebar Claude integrata.
-L'umano disegna, Claude risponde sia testualmente (nella sidebar) sia
-visivamente (aggiungendo, modificando, annotando elementi sul canvas).
+![ExcaliClaude in action](public/screen.jpg)
 
-## Architettura
+Claude opens a native window with Excalidraw and an integrated Claude sidebar. The human draws, Claude responds both textually (in the sidebar) and visually (by adding, modifying, and annotating elements on the canvas).
+
+## Architecture
 
 ```
 Claude Code CLI
      │ (MCP stdio)
      ▼
 ExcaliClaude MCP Server  ──spawn──►  Canvas App (Bun/Node)
- (26 tool legacy +                   ├─ Express + WebSocket
-  8 tool sessione)                   └─ Finestra nativa webview-bun
+ (26 legacy tools +                  ├─ Express + WebSocket
+  8 session tools)                   └─ Native webview-bun window
                                         (fallback: Chrome app-mode)
 ```
 
-Ogni sessione è un **processo indipendente** con la sua porta e finestra
-dedicata, gestito dal `SessionManager` centrale.
+Each session is an **independent process** with its own port and dedicated window, managed by the central `SessionManager`.
 
-## Tool MCP
+## MCP Tools
 
-**26 tool legacy** ereditati dal fork di
-[yctimlin/mcp_excalidraw](https://github.com/yctimlin/mcp_excalidraw):
+**26 legacy tools** inherited from the [yctimlin/mcp_excalidraw](https://github.com/yctimlin/mcp_excalidraw) fork:
 
-- **Elementi** — `create_element`, `update_element`, `delete_element`,
+- **Elements** — `create_element`, `update_element`, `delete_element`,
   `get_element`, `batch_create_elements`, `duplicate_elements`, `query_elements`
 - **Layout** — `align_elements`, `distribute_elements`, `group_elements`,
   `ungroup_elements`, `lock_elements`, `unlock_elements`
@@ -37,20 +33,20 @@ dedicata, gestito dal `SessionManager` centrale.
 - **Inspect** — `describe_scene`, `get_canvas_screenshot`, `snapshot_scene`,
   `restore_snapshot`, `clear_canvas`, `set_viewport`, `read_diagram_guide`
 
-**8 tool sessione** nuovi di ExcaliClaude:
+**8 new session tools** introduced by ExcaliClaude:
 
-| Tool | Descrizione |
+| Tool | Description |
 |---|---|
-| `open_canvas` | Apre un nuovo canvas in una finestra dedicata |
-| `close_canvas` | Chiude una sessione, opzionalmente la salva |
-| `list_sessions` | Lista le sessioni attive |
-| `wait_for_human` | Blocca fino al segnale "Claude, guarda!" dell'umano |
-| `save_session` | Salva lo stato come file `.excalidraw` |
-| `send_message_to_canvas` | Invia un messaggio Claude alla sidebar |
-| `annotate` | Commenta un elemento con nota + freccia |
-| `get_human_changes` | Recupera le modifiche umane recenti |
+| `open_canvas` | Opens a new canvas in a dedicated window |
+| `close_canvas` | Closes a session, optionally saving it |
+| `list_sessions` | Lists active sessions |
+| `wait_for_human` | Blocks until the human clicks "Claude, look!" |
+| `save_session` | Saves the current state as an `.excalidraw` file |
+| `send_message_to_canvas` | Sends a Claude message to the sidebar |
+| `annotate` | Annotates an element with a note and arrow |
+| `get_human_changes` | Retrieves recent human-made changes |
 
-## Installazione (sviluppo)
+## Installation (development)
 
 ```bash
 git clone https://github.com/ttessarolo/excaliclaude.git
@@ -66,51 +62,44 @@ npm run build
 ```bash
 npm install
 npm run build          # server + frontend (tsc + vite)
-npm run dev:canvas     # tsx watch canvas server (porta 3000)
+npm run dev:canvas     # tsx watch canvas server (port 3000)
 npm run dev            # vite frontend + tsc watch
 ```
 
 ### Standalone binary
 
-Il canvas runtime è distribuito come **singolo eseguibile Bun** che incorpora
-runtime, server Express, frontend Excalidraw e finestra nativa in un unico
-file — nessuna dipendenza da Bun o Chrome installati sulla macchina utente.
+The canvas runtime is distributed as a **single Bun executable** that bundles the runtime, Express server, Excalidraw frontend, and native window into one file — no dependency on Bun or Chrome installed on the user's machine.
 
 ```bash
-# One-time: installa Bun
+# One-time: install Bun
 curl -fsSL https://bun.sh/install | bash
 
-# Build binary per la platform corrente
+# Build binary for the current platform
 npm run build:bin
 # → dist/bin/canvas-<platform>-<arch>  (~82 MB)
 ```
 
-Il `SessionManager` rileva automaticamente il binary in `dist/bin/` e lo
-preferisce allo spawn legacy a 2 processi. Se il binary manca, ricade sul
-dev mode (spawn `node dist/canvas-app/start-server.js` + webview-bun/Chrome).
+The `SessionManager` automatically detects the binary in `dist/bin/` and prefers it over the legacy 2-process spawn. If the binary is missing, it falls back to dev mode (`node dist/canvas-app/start-server.js` + webview-bun/Chrome).
 
-> **macOS:** i binari `bun build --compile` non firmati vengono bloccati
-> da Gatekeeper. `build-bin.ts` applica un codesign ad-hoc dopo la
-> compilazione, per cui il binary locale funziona senza configurazione.
+> **macOS:** unsigned `bun build --compile` binaries are blocked by Gatekeeper.
+> `build-bin.ts` applies an ad-hoc codesign after compilation, so the local
+> binary works without any extra configuration.
 
-Poi registra il plugin in Claude Code:
+Then register the plugin in Claude Code:
 
 ```bash
 /plugin marketplace add ttessarolo/excaliclaude
 /plugin install excaliclaude@excaliclaude-marketplace
 ```
 
-## Utilizzo
+## Usage
 
-In una conversazione con Claude Code:
+In a conversation with Claude Code:
 
-> Apri un canvas, voglio discutere l'architettura del mio progetto
+> Open a canvas, I want to discuss my project's architecture
 
-Claude attiverà automaticamente la skill `excaliclaude`, aprirà una finestra
-con il canvas, disegnerà una prima proposta e aspetterà il tuo feedback.
-Clicca **"👀 Claude, guarda!"** nella sidebar quando vuoi che Claude riveda
-il canvas.
+Claude will automatically activate the `excaliclaude` skill, open a canvas window, draw an initial proposal, and wait for your feedback. Click **"👀 Claude, look!"** in the sidebar whenever you want Claude to review the canvas.
 
-## Licenza
+## License
 
-MIT — deriva da [yctimlin/mcp_excalidraw](https://github.com/yctimlin/mcp_excalidraw).
+MIT — derived from [yctimlin/mcp_excalidraw](https://github.com/yctimlin/mcp_excalidraw).
