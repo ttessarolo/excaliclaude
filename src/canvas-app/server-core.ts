@@ -45,6 +45,8 @@ export interface CanvasAppOptions {
   /** Invoked on POST /api/claude/quit after the response is sent. The
    * caller owns shutdown: kill window/child, close server, process.exit. */
   onQuit?: () => void;
+  /** Directory containing .excalidrawlib files to load on startup. */
+  librariesDir?: string;
   /** Path to an .excalidraw file to hydrate on startup. If a sibling .md
    * file exists, its content is armed as session memory and delivered to
    * Claude on the next signal (Feature 3). */
@@ -907,6 +909,65 @@ app.delete('/api/files/:id', (req: Request, res: Response) => {
     res.json({ success: true });
   } else {
     res.status(404).json({ success: false, error: `File with ID ${id} not found` });
+  }
+});
+
+// ─── Libraries API ──────────────────────────────────────────
+// GET all library items + file list from librariesDir
+app.get('/api/libraries', (_req: Request, res: Response) => {
+  if (!options.librariesDir) {
+    return res.json({ success: true, libraryItems: [], files: [] });
+  }
+  try {
+    const dir = options.librariesDir;
+    if (!fs.existsSync(dir)) {
+      return res.json({ success: true, libraryItems: [], files: [] });
+    }
+    const libFiles = fs.readdirSync(dir).filter(f => f.endsWith('.excalidrawlib'));
+    const allItems: any[] = [];
+    for (const file of libFiles) {
+      try {
+        const raw = fs.readFileSync(path.join(dir, file), 'utf-8');
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed.libraryItems)) {
+          allItems.push(...parsed.libraryItems);
+        }
+      } catch (err) {
+        logger.warn(`[libraries] failed to parse ${file}: ${(err as Error).message}`);
+      }
+    }
+    res.json({ success: true, libraryItems: allItems, files: libFiles });
+  } catch (err) {
+    logger.error(`[libraries] failed to read dir: ${(err as Error).message}`);
+    res.json({ success: true, libraryItems: [], files: [] });
+  }
+});
+
+// POST save library items to a specific file
+app.post('/api/libraries/:filename', (req: Request, res: Response) => {
+  if (!options.librariesDir) {
+    return res.status(400).json({ success: false, error: 'No libraries directory configured' });
+  }
+  const filename = req.params.filename;
+  if (!filename.endsWith('.excalidrawlib') || filename.includes('/') || filename.includes('..')) {
+    return res.status(400).json({ success: false, error: 'Invalid filename' });
+  }
+  try {
+    const dir = options.librariesDir;
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    const libraryData = {
+      type: 'excalidrawlib',
+      version: 2,
+      source: 'excaliclaude',
+      libraryItems: req.body.libraryItems || []
+    };
+    fs.writeFileSync(path.join(dir, filename), JSON.stringify(libraryData, null, 2), 'utf-8');
+    res.json({ success: true });
+  } catch (err) {
+    logger.error(`[libraries] failed to save ${filename}: ${(err as Error).message}`);
+    res.status(500).json({ success: false, error: 'Failed to save library' });
   }
 });
 

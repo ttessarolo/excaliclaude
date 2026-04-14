@@ -36,11 +36,14 @@ const FONTS_DIR = path.join(
   'fonts',
 );
 
+const LIBRARIES_DIR = path.join(PROJECT_ROOT, 'libraries');
+
 const { server } = createCanvasApp({
   sessionId: process.env.EXCALICLAUDE_SESSION_ID,
   title: process.env.EXCALICLAUDE_SESSION_TITLE,
   serveStaticFrom: FRONTEND_DIR,
   fontsDir: FONTS_DIR,
+  librariesDir: LIBRARIES_DIR,
 });
 
 const PORT = parseInt(process.env.PORT || '3000', 10);

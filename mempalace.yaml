@@ -1,0 +1,13 @@
+wing: excaliclaude
+rooms:
+  - name: skills
+    description: Files from skills/
+    keywords:
+      - skills
+  - name: src
+    description: Files from src/
+    keywords:
+      - src
+  - name: general
+    description: Files that don't fit other rooms
+    keywords: []

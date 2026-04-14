@@ -629,6 +629,77 @@
   border-color: var(--claude-error);
 }
 
+/* ── Library save modal ─────────────────────────────────── */
+.library-save-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.library-save-radio {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--claude-text);
+  cursor: pointer;
+}
+.library-save-radio input[type="radio"] {
+  accent-color: var(--claude-accent);
+}
+
+.library-save-select {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--claude-border);
+  border-radius: 6px;
+  background: var(--claude-bg);
+  color: var(--claude-text);
+  font-size: 13px;
+  margin-left: 24px;
+  box-sizing: border-box;
+  max-width: calc(100% - 24px);
+}
+
+.library-save-new-file {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 24px;
+}
+.library-save-input {
+  flex: 1;
+  padding: 8px 10px;
+  border: 1px solid var(--claude-border);
+  border-radius: 6px;
+  background: var(--claude-bg);
+  color: var(--claude-text);
+  font-size: 13px;
+}
+.library-save-input:focus {
+  outline: none;
+  border-color: var(--claude-accent);
+}
+.library-save-ext {
+  font-size: 12px;
+  color: var(--claude-text-muted);
+  white-space: nowrap;
+}
+
+.library-save-remember {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--claude-text-muted);
+  margin-bottom: 16px;
+  cursor: pointer;
+}
+.library-save-remember input[type="checkbox"] {
+  accent-color: var(--claude-accent);
+}
+
 /* ── Save flash indicator ───────────────────────────────── */
 .save-flash {
   position: fixed;

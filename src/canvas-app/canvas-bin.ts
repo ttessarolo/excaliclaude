@@ -280,6 +280,7 @@ async function runServer(): Promise<void> {
     sessionId: SESSION_ID,
     title: SESSION_TITLE,
     loadScenePath: LOAD_SCENE_PATH ? path.resolve(LOAD_SCENE_PATH) : undefined,
+    librariesDir: path.join(path.dirname(process.execPath), 'libraries'),
     rootHandler: (req, res, next) => void serveEmbedded(req, res, next),
     staticHandler: (req, res, next) => void serveEmbedded(req, res, next),
     onQuit: () => {

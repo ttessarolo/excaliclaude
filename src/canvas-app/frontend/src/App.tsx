@@ -12,6 +12,7 @@ import { convertMermaidToExcalidraw, DEFAULT_MERMAID_CONFIG } from './utils/merm
 import type { MermaidConfig } from '@excalidraw/mermaid-to-excalidraw'
 import { ClaudeSidebar } from './components/ClaudeSidebar'
 import { QuitModal } from './components/QuitModal'
+import { LibrarySaveModal } from './components/LibrarySaveModal'
 import { useClaudeBridge } from './hooks/useClaudeBridge'
 import { hashScene } from './lib/sceneHash'
 import { registerExcalidrawAPIForClipboard } from './lib/clipboard-bridge'
@@ -325,6 +326,14 @@ function App(): JSX.Element {
   // the previous description instead of calling describe_scene again.
   const lastSignalSceneHashRef = useRef<string | null>(null)
 
+  // Library state
+  const [libraryFiles, setLibraryFiles] = useState<string[]>([])
+  const [librarySaveTarget, setLibrarySaveTarget] = useState<string | null>(null)
+  const [showLibrarySaveModal, setShowLibrarySaveModal] = useState(false)
+  const pendingLibraryItemsRef = useRef<any[] | null>(null)
+  const initialLibraryLoadDoneRef = useRef(false)
+  const librarySaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   // Sync state management
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle')
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null)
@@ -362,10 +371,11 @@ function App(): JSX.Element {
     }
   }, [])
 
-  // Load existing elements when Excalidraw API becomes available
+  // Load existing elements and libraries when Excalidraw API becomes available
   useEffect(() => {
     if (excalidrawAPI) {
       loadExistingElements()
+      loadLibraries()
 
       // Ensure WebSocket is connected for real-time updates
       if (!isConnected) {
@@ -399,6 +409,59 @@ function App(): JSX.Element {
       }
     } catch (error) {
       console.error('Error loading existing elements:', error)
+    }
+  }
+
+  const loadLibraries = async (): Promise<void> => {
+    try {
+      const response = await fetch('/api/libraries')
+      const result = await response.json()
+      if (result.success) {
+        if (result.files) {
+          setLibraryFiles(result.files)
+        }
+        if (result.libraryItems && result.libraryItems.length > 0 && excalidrawAPI) {
+          await excalidrawAPI.updateLibrary({
+            libraryItems: result.libraryItems,
+            merge: true,
+            defaultStatus: 'published',
+          })
+        }
+        // Mark initial load as done after a short delay to ignore the
+        // onLibraryChange callback triggered by updateLibrary
+        setTimeout(() => { initialLibraryLoadDoneRef.current = true }, 500)
+      }
+    } catch (error) {
+      console.error('Error loading libraries:', error)
+      initialLibraryLoadDoneRef.current = true
+    }
+  }
+
+  const saveLibraryItems = async (items: any[], filename: string): Promise<void> => {
+    try {
+      await fetch(`/api/libraries/${encodeURIComponent(filename)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ libraryItems: items }),
+      })
+    } catch (error) {
+      console.error('Error saving library:', error)
+    }
+  }
+
+  const handleLibraryChange = (libraryItems: any[]): void => {
+    if (!initialLibraryLoadDoneRef.current) return
+
+    if (librarySaveTarget) {
+      // Debounce save
+      if (librarySaveTimerRef.current) clearTimeout(librarySaveTimerRef.current)
+      librarySaveTimerRef.current = setTimeout(() => {
+        saveLibraryItems(libraryItems, librarySaveTarget)
+      }, 1000)
+    } else {
+      // No target chosen yet — show dialog
+      pendingLibraryItemsRef.current = libraryItems
+      setShowLibrarySaveModal(true)
     }
   }
 
@@ -1037,6 +1100,7 @@ function App(): JSX.Element {
             initialData={{
               elements: []
             }}
+            onLibraryChange={handleLibraryChange}
           />
         </div>
       </div>
@@ -1074,6 +1138,27 @@ function App(): JSX.Element {
         onSave={confirmSaveAndQuit}
         onDiscard={confirmDiscardAndQuit}
         onCancel={cancelQuit}
+      />
+
+      <LibrarySaveModal
+        open={showLibrarySaveModal}
+        files={libraryFiles}
+        onSave={(filename, remember) => {
+          setShowLibrarySaveModal(false)
+          if (remember) setLibrarySaveTarget(filename)
+          if (pendingLibraryItemsRef.current) {
+            saveLibraryItems(pendingLibraryItemsRef.current, filename)
+            pendingLibraryItemsRef.current = null
+          }
+          // Add the new file to the list if it's not already there
+          if (!libraryFiles.includes(filename)) {
+            setLibraryFiles(prev => [...prev, filename])
+          }
+        }}
+        onCancel={() => {
+          setShowLibrarySaveModal(false)
+          pendingLibraryItemsRef.current = null
+        }}
       />
     </div>
   )
