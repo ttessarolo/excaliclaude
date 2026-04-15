@@ -1,0 +1,9 @@
+{
+  "providers": {
+    "mempalace": { "enabled": true },
+    "context7": { "enabled": true },
+    "obsidian": {
+      "enabled": false
+    }
+  }
+}

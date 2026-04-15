@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  build-js:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -45,8 +45,94 @@ jobs:
           name: excaliclaude-dist
           path: dist/
 
+  build-bin:
+    needs: build-js
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: bun-darwin-arm64
+            suffix: darwin-arm64
+          - os: macos-13
+            target: bun-darwin-x64
+            suffix: darwin-x64
+          - os: ubuntu-24.04-arm
+            target: bun-linux-arm64
+            suffix: linux-arm64
+          - os: ubuntu-latest
+            target: bun-linux-x64
+            suffix: linux-x64
+          - os: windows-latest
+            target: bun-windows-x64
+            suffix: windows-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Build frontend + embedded
+        run: |
+          npm run build:frontend
+          npm run gen:embedded
+
+      - name: Build native binary
+        shell: bash
+        run: npm run build:bin -- --target ${{ matrix.target }}
+
+      # Packaging per-OS
+      - name: Package (macOS)
+        if: startsWith(matrix.os, 'macos')
+        shell: bash
+        run: |
+          cd dist/bin
+          APP="ExcaliClaude-${{ matrix.suffix }}.app"
+          test -d "$APP" || (echo "Missing $APP" && exit 1)
+          zip -ry "excaliclaude-${{ matrix.suffix }}.zip" "$APP"
+
+      - name: Package (Linux)
+        if: startsWith(matrix.os, 'ubuntu')
+        shell: bash
+        run: |
+          cd dist/bin
+          BIN="canvas-${{ matrix.suffix }}"
+          test -f "$BIN" || (echo "Missing $BIN" && exit 1)
+          chmod +x "$BIN"
+          tar -czf "excaliclaude-${{ matrix.suffix }}.tar.gz" "$BIN"
+
+      - name: Package (Windows)
+        if: startsWith(matrix.os, 'windows')
+        shell: pwsh
+        run: |
+          cd dist/bin
+          $bin = "canvas-${{ matrix.suffix }}.exe"
+          if (!(Test-Path $bin)) { throw "Missing $bin" }
+          Compress-Archive -Path $bin -DestinationPath "excaliclaude-${{ matrix.suffix }}.zip" -Force
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: excaliclaude-${{ matrix.suffix }}
+          path: |
+            dist/bin/excaliclaude-${{ matrix.suffix }}.zip
+            dist/bin/excaliclaude-${{ matrix.suffix }}.tar.gz
+          if-no-files-found: ignore
+
   release:
-    needs: build
+    needs: [build-js, build-bin]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
@@ -63,13 +149,22 @@ jobs:
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
-      - name: Build
+      - name: Build plugin bundle
         run: |
           npm run build:server
           npm run build:frontend
 
-      - name: Create release archive
+      - name: Download binary artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: excaliclaude-*
+          path: artifacts
+          merge-multiple: false
+
+      - name: Assemble release assets
         run: |
+          mkdir -p release
+          # Plugin archive
           mkdir -p release/excaliclaude
           cp -r .claude-plugin release/excaliclaude/
           cp -r skills release/excaliclaude/
@@ -78,10 +173,21 @@ jobs:
           cp package.json release/excaliclaude/
           cp README.md release/excaliclaude/
           cp LICENSE release/excaliclaude/
-          cd release && zip -r ../excaliclaude-${{ github.ref_name }}.zip excaliclaude/
+          (cd release && zip -r ../excaliclaude-${{ github.ref_name }}.zip excaliclaude/)
+          # Flatten native binaries into release dir
+          find artifacts -type f \( -name '*.zip' -o -name '*.tar.gz' \) \
+            ! -name 'excaliclaude-dist*' -exec cp {} . \;
+          ls -la
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: excaliclaude-${{ github.ref_name }}.zip
+          files: |
+            excaliclaude-${{ github.ref_name }}.zip
+            excaliclaude-darwin-arm64.zip
+            excaliclaude-darwin-x64.zip
+            excaliclaude-linux-arm64.tar.gz
+            excaliclaude-linux-x64.tar.gz
+            excaliclaude-windows-x64.zip
+          fail_on_unmatched_files: false
           generate_release_notes: true

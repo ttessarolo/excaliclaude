@@ -1,6 +1,6 @@
 {
   "name": "excaliclaude",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Interactive visual collaboration between human and Claude on a shared Excalidraw canvas. MCP server + Excalidraw frontend + native window.",
   "type": "module",
   "main": "dist/mcp/index.js",
@@ -20,6 +20,7 @@
     "gen:embedded": "tsx scripts/generate-embedded-frontend.ts",
     "gen:icon": "tsx scripts/generate-icon.ts",
     "build:bin": "tsx scripts/build-bin.ts",
+    "release": "tsx scripts/release.ts",
     "start": "node dist/mcp/index.js",
     "start:http": "node dist/mcp/index.js --http-only"
   },

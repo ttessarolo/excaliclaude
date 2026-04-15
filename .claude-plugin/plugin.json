@@ -1,6 +1,6 @@
 {
   "name": "excaliclaude",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Interactive visual collaboration between human and Claude on a shared Excalidraw canvas. Draw together, discuss ideas visually, brainstorm on a whiteboard.",
   "author": {
     "name": "ttessarolo"

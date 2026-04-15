@@ -33,16 +33,34 @@ function run(cmd: string): void {
 }
 
 function which(bin: string): string | null {
-  const candidates = [
-    `${process.env.HOME}/.bun/bin/${bin}`,
-    `/usr/local/bin/${bin}`,
-    `/opt/homebrew/bin/${bin}`,
-  ];
+  const isWin = process.platform === 'win32';
+  const exe = isWin ? `${bin}.exe` : bin;
+  const home = process.env.HOME || process.env.USERPROFILE || '';
+  const candidates = isWin
+    ? [
+        `${home}\\.bun\\bin\\${exe}`,
+        `${process.env.ProgramFiles ?? ''}\\bun\\${exe}`,
+      ]
+    : [
+        `${home}/.bun/bin/${bin}`,
+        `/usr/local/bin/${bin}`,
+        `/opt/homebrew/bin/${bin}`,
+      ];
   for (const c of candidates) {
-    if (fs.existsSync(c)) return c;
+    if (c && fs.existsSync(c)) return c;
+  }
+  // PATH lookup (cross-platform)
+  const pathEnv = process.env.PATH || '';
+  const sep = isWin ? ';' : ':';
+  for (const dir of pathEnv.split(sep)) {
+    if (!dir) continue;
+    const p = path.join(dir, exe);
+    if (fs.existsSync(p)) return p;
   }
   try {
-    return execSync(`command -v ${bin}`, { encoding: 'utf8' }).trim() || null;
+    const cmd = isWin ? `where ${bin}` : `command -v ${bin}`;
+    const out = execSync(cmd, { encoding: 'utf8' }).trim();
+    return out.split(/\r?\n/)[0] || null;
   } catch {
     return null;
   }
@@ -50,6 +68,19 @@ function which(bin: string): string | null {
 
 const APP_NAME = 'ExcaliClaude';
 const APP_BUNDLE_ID = 'dev.excaliclaude.canvas';
+
+function readVersion(): string {
+  try {
+    const pkg = JSON.parse(
+      fs.readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf8'),
+    );
+    return typeof pkg.version === 'string' ? pkg.version : '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+}
+
+const APP_VERSION = readVersion();
 
 function ensureIcon(): string | null {
   const icns = path.join(PROJECT_ROOT, 'assets', 'icon', 'icon.icns');
@@ -90,9 +121,9 @@ function writeInfoPlist(
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.1.0</string>
+  <string>${APP_VERSION}</string>
   <key>CFBundleVersion</key>
-  <string>0.1.0</string>
+  <string>${APP_VERSION}</string>
   <key>LSMinimumSystemVersion</key>
   <string>11.0</string>
   <key>NSHighResolutionCapable</key>
